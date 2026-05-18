@@ -145,8 +145,13 @@ def hbm_usage_bytes(devices: Any) -> List[Tuple[int, int]]:
                     e)
     else:
         for device in devices:
-            hbm_used = device.memory_stats()["bytes_in_use"]
-            hbm_limit = device.memory_stats()["bytes_limit"]
+            stats = device.memory_stats()
+            if stats is not None:
+                hbm_used = stats["bytes_in_use"]
+                hbm_limit = stats["bytes_limit"]
+            else:
+                hbm_used = 0
+                hbm_limit = 32 * GBYTES
             usage.append((hbm_used, hbm_limit))
 
     return usage
@@ -248,7 +253,7 @@ def make_optimized_mesh(axis_shapes: Sequence[int],
     if devices is None:
         devices = xb.devices()
     # Sort the devices in case it's passed in an arbitary order
-    devices = sorted(devices, key=lambda x: x.coords)
+    devices = sorted(devices, key=lambda x: getattr(x, 'coords', (x.id, )))
 
     def _is_1D(axis_shapes):
         return sum(x > 1 for x in axis_shapes) == 1

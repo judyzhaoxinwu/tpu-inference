@@ -71,6 +71,7 @@ def _get_model_architecture(config: PretrainedConfig) -> nnx.Module:
     # NOTE: Use inline imports here, otherwise the normal imports
     # would cause JAX init failure when using multi hosts with Ray.
 
+    from tpu_inference.models.jax.axlearn_model import AxLearnForCausalLM
     from tpu_inference.models.jax.deepseek_v3 import DeepseekV3ForCausalLM
     from tpu_inference.models.jax.gemma4_mm import \
         Gemma4ForConditionalGeneration
@@ -84,7 +85,6 @@ def _get_model_architecture(config: PretrainedConfig) -> nnx.Module:
         Qwen2_5_VLForConditionalGeneration
     from tpu_inference.models.jax.qwen3 import Qwen3ForCausalLM
     from tpu_inference.models.jax.qwen3_moe import Qwen3MoeForCausalLM
-    from tpu_inference.models.jax.axlearn_model import AxLearnForCausalLM
     _MODEL_REGISTRY["Llama4ForCausalLM"] = Llama4ForCausalLM
     _MODEL_REGISTRY["DeepseekV3ForCausalLM"] = DeepseekV3ForCausalLM
     _MODEL_REGISTRY["LlamaForCausalLM"] = LlamaForCausalLM

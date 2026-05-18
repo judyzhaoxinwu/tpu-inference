@@ -110,7 +110,8 @@ class TPUWorker(WorkerBase):
             is_driver_worker=is_driver_worker,
         )
 
-        self.devices = devices if devices is not None else []
+        self.devices = [d for d in devices
+                        if d is not None] if devices is not None else []
         self.device_ranks = set(device.id for device in self.devices
                                 if isinstance(device, jaxlib._jax.Device))
         self.pp_config = PPConfig(vllm_config, rank, ip, prev_worker_ip,
