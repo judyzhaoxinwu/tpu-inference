@@ -17,12 +17,20 @@ from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+from axlearn.common.attention import (FusedGroupedQKVLinear, FusedQKVLinear,
+                                      GroupedQueryAttention,
+                                      MultiheadAttention, RoFormerQKVLinear)
 from axlearn.common.checkpointer import CheckpointValidationType
+from axlearn.common.layers import RMSNorm
 from axlearn.common.module import functional as F
 from axlearn.common.state_builder import (Builder,
                                           TensorStoreStateStorageBuilder)
-from axlearn.experiments.text.gpt.c4_trainer import named_trainer_configs
-from axlearn.experiments.text.gpt.fuji import model_config as fuji_model_config
+from axlearn.experiments.text.gpt.c4_trainer import \
+    named_trainer_configs as c4_configs
+from axlearn.experiments.text.gpt.common import \
+    model_config as common_model_config
+from axlearn.experiments.text.gpt.pajama_trainer import \
+    named_trainer_configs as pajama_configs
 from flax import nnx
 from jax.sharding import Mesh
 from vllm.config import VllmConfig
@@ -58,36 +66,67 @@ class AxLearnForCausalLM(nnx.Module):
                               {}).get("axlearn_config", {})
         model_name = axlearn_cfg.get("model_name", None)
 
-        configs_map = named_trainer_configs()
+        configs_map = {}
+        configs_map.update(c4_configs())
+        configs_map.update(pajama_configs())
         if model_name and model_name in configs_map:
             logger.info(
                 f"Instantiating model structure directly from AxLearn registry: {model_name}"
             )
             trainer_cfg = configs_map[model_name]()
-            self.fuji_config = trainer_cfg.model.set(name="fuji")
+            self.axlearn_model_config = trainer_cfg.model.set(name=model_name)
         else:
             logger.info(
-                f"Named config '{model_name}' not found in AxLearn registry. Mapping properties from HF config."
+                f"Named config '{model_name}' not found in AxLearn registry. Mapping properties model-agnostically from HF config."
             )
-            self.fuji_config = fuji_model_config(
+            # 1. Resolve Grouped Query Attention (GQA) parameters
+            num_kv_heads = getattr(model_config_hf, "num_key_value_heads",
+                                   None)
+            if num_kv_heads and num_kv_heads != model_config_hf.num_attention_heads:
+                atten_cfg = GroupedQueryAttention.default_config()
+                atten_input_linear = FusedGroupedQKVLinear.default_config(
+                ).set(num_kv_heads=num_kv_heads)
+            else:
+                atten_cfg = MultiheadAttention.default_config()
+                atten_input_linear = FusedQKVLinear.default_config()
+
+            # 2. Setup Rotary Position Embeddings (RoPE)
+            attention_qkv_linear = RoFormerQKVLinear.default_config().set(
+                input_linear=atten_input_linear,
+                rotary_value=False,
+            )
+            rope_theta = getattr(model_config_hf, "rope_theta", 10000.0)
+            attention_qkv_linear.rope_pos_emb_layer.set(theta=rope_theta)
+
+            # 3. Setup MoE parameters dynamically (if expert keys are present)
+            num_experts = getattr(
+                model_config_hf, "num_local_experts",
+                getattr(model_config_hf, "num_experts", None))
+            ffn_layer_types = None
+            expert_cfg = None
+            if num_experts is not None:
+                from axlearn.common.mixture_of_experts import MixtureOfExperts
+                ffn_layer_types = ["dense", "sparse"]
+                expert_cfg = MixtureOfExperts.default_config().set(
+                    num_experts=num_experts)
+
+            self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
-                num_heads=model_config_hf.num_attention_heads,
                 hidden_dim=model_config_hf.hidden_size,
-                num_kv_heads=model_config_hf.num_key_value_heads,
+                num_heads=model_config_hf.num_attention_heads,
                 vocab_size=model_config_hf.vocab_size,
-                rope_theta=getattr(model_config_hf, "rope_theta", 10000.0),
-                shared_lm_head=getattr(model_config_hf, "tie_word_embeddings",
-                                       False),
-                dropout_rate=0.0,
+                activation_fn=("nn.silu", "linear"),  # SwiGLU
                 ffn_dim=model_config_hf.intermediate_size,
-                flash_attention=getattr(model_config_hf,
-                                        "use_flash_attention_2", False),
-                stack_cfg=None,
+                normalization=RMSNorm,
+                attention_cfg=atten_cfg,
+                attention_qkv_linear=attention_qkv_linear,
+                ffn_layer_types=ffn_layer_types,
+                expert_cfg=expert_cfg,
                 pad_token_id=model_config_hf.pad_token_id,
                 eos_token_id=model_config_hf.eos_token_id,
-            ).set(name="fuji")
+            ).set(name=model_name or "axlearn_model")
 
-        self.model = self.fuji_config.instantiate(parent=None)
+        self.model = self.axlearn_model_config.instantiate(parent=None)
 
     def __call__(
         self,
