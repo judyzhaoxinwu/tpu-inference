@@ -57,7 +57,18 @@ class AxLearnForCausalLM(nnx.Module):
                  mesh: Mesh) -> None:
         self.vllm_config = vllm_config
 
-        self.mesh = mesh
+        # Re-map vLLM's physical mesh axis names to AxLearn's logical axis names
+        vllm_axis_to_axlearn = {
+            "data": "data",
+            "model": "model",
+            "expert": "expert",
+            "attn_dp_expert": "fsdp",
+            "attn_dp": "seq",
+            "dcp": "pipeline"
+        }
+        axlearn_axis_names = tuple(
+            vllm_axis_to_axlearn.get(name, name) for name in mesh.axis_names)
+        self.mesh = jax.sharding.Mesh(mesh.devices, axlearn_axis_names)
 
         model_config_hf = vllm_config.model_config.hf_config
         self.hidden_dim = model_config_hf.hidden_size
