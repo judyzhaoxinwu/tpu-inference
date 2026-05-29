@@ -72,7 +72,7 @@ class AxLearnForCausalLM(nnx.Module):
 
         # Register the remapped mesh globally in AxLearn's physical mesh fallback
         from axlearn.common.utils import thread_resources
-        thread_resources.env.physical_mesh = self.mesh
+        thread_resources.env = thread_resources.env._replace(physical_mesh=self.mesh)
 
         model_config_hf = vllm_config.model_config.hf_config
         self.hidden_dim = model_config_hf.hidden_size
