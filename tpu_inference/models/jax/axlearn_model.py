@@ -17,20 +17,7 @@ from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
-from axlearn.common.attention import (FusedGroupedQKVLinear, FusedQKVLinear,
-                                      GroupedQueryAttention,
-                                      MultiheadAttention, RoFormerQKVLinear)
-from axlearn.common.checkpointer import CheckpointValidationType
-from axlearn.common.layers import RMSNorm
-from axlearn.common.module import functional as F
-from axlearn.common.state_builder import (Builder,
-                                          TensorStoreStateStorageBuilder)
-from axlearn.experiments.text.gpt.c4_trainer import \
-    named_trainer_configs as c4_configs
-from axlearn.experiments.text.gpt.common import \
-    model_config as common_model_config
-from axlearn.experiments.text.gpt.pajama_trainer import \
-    named_trainer_configs as pajama_configs
+# AxLearn imports moved locally inside serving methods to ensure mesh context binding
 from flax import nnx
 from jax.sharding import Mesh
 from vllm.config import VllmConfig
@@ -73,6 +60,19 @@ class AxLearnForCausalLM(nnx.Module):
         # Register the remapped mesh globally in AxLearn's physical mesh fallback
         from axlearn.common.utils import thread_resources
         thread_resources.env = thread_resources.env._replace(physical_mesh=self.mesh)
+
+        # Dynamic imports inside active JAX Mesh context manager to force shard_map axis binding!
+        with self.mesh:
+            from axlearn.common.attention import (FusedGroupedQKVLinear, FusedQKVLinear,
+                                              GroupedQueryAttention,
+                                              MultiheadAttention, RoFormerQKVLinear)
+            from axlearn.common.layers import RMSNorm
+            from axlearn.experiments.text.gpt.c4_trainer import \
+                named_trainer_configs as c4_configs
+            from axlearn.experiments.text.gpt.common import \
+                model_config as common_model_config
+            from axlearn.experiments.text.gpt.pajama_trainer import \
+                named_trainer_configs as pajama_configs
 
         model_config_hf = vllm_config.model_config.hf_config
         self.hidden_dim = model_config_hf.hidden_size
@@ -180,6 +180,7 @@ class AxLearnForCausalLM(nnx.Module):
             return_aux=True,
         )
 
+        from axlearn.common.module import functional as F
         with self.mesh:
             outputs, output_collection = F(
                 self.model,
@@ -198,6 +199,7 @@ class AxLearnForCausalLM(nnx.Module):
     def compute_logits(self, hidden_states: jax.Array) -> jax.Array:
         hidden_states_3d = jnp.expand_dims(hidden_states, axis=1)
 
+        from axlearn.common.module import functional as F
         with self.mesh:
             if hasattr(self.model.decoder,
                        "lm_head") and self.model.decoder.lm_head is not None:
@@ -231,6 +233,9 @@ class AxLearnForCausalLM(nnx.Module):
                 f"Streaming authentic checkpoint parameters from remote storage: {ckpt_path}"
             )
 
+            from axlearn.common.checkpointer import CheckpointValidationType
+            from axlearn.common.state_builder import (Builder,
+                                                      TensorStoreStateStorageBuilder)
             with self.mesh:
                 target_specs = dict(
                     model=self.model.create_parameter_specs_recursively())
