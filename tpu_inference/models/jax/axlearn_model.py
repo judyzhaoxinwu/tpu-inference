@@ -70,6 +70,10 @@ class AxLearnForCausalLM(nnx.Module):
             vllm_axis_to_axlearn.get(name, name) for name in mesh.axis_names)
         self.mesh = jax.sharding.Mesh(mesh.devices, axlearn_axis_names)
 
+        # Register the remapped mesh globally in AxLearn's physical mesh fallback
+        from axlearn.common.utils import thread_resources
+        thread_resources.env.physical_mesh = self.mesh
+
         model_config_hf = vllm_config.model_config.hf_config
         self.hidden_dim = model_config_hf.hidden_size
         self.vocab_size = model_config_hf.vocab_size
@@ -137,7 +141,8 @@ class AxLearnForCausalLM(nnx.Module):
                 eos_token_id=model_config_hf.eos_token_id,
             ).set(name=model_name or "axlearn_model")
 
-        self.model = self.axlearn_model_config.instantiate(parent=None)
+        with self.mesh:
+            self.model = self.axlearn_model_config.instantiate(parent=None)
 
     def __call__(
         self,
@@ -156,7 +161,9 @@ class AxLearnForCausalLM(nnx.Module):
                List[jax.Array], Optional[jax.Array]]:
 
         import sys
-        print("VLLM JAX CONTEXT MESH:", jax.sharding.get_abstract_mesh(), file=sys.stderr)
+        print("VLLM JAX CONTEXT MESH:",
+              jax.sharding.get_abstract_mesh(),
+              file=sys.stderr)
         print("VLLM MODEL MESH:", self.mesh, file=sys.stderr)
         input_ids_2d = jnp.expand_dims(input_ids, axis=1)
         positions_2d = jnp.expand_dims(attention_metadata.input_positions,
