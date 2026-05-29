@@ -155,6 +155,9 @@ class AxLearnForCausalLM(nnx.Module):
     ) -> Tuple[List[jax.Array], jax.Array | JaxIntermediateTensors,
                List[jax.Array], Optional[jax.Array]]:
 
+        import sys
+        print("VLLM JAX CONTEXT MESH:", jax.sharding.get_abstract_mesh(), file=sys.stderr)
+        print("VLLM MODEL MESH:", self.mesh, file=sys.stderr)
         input_ids_2d = jnp.expand_dims(input_ids, axis=1)
         positions_2d = jnp.expand_dims(attention_metadata.input_positions,
                                        axis=1)
