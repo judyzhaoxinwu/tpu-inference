@@ -95,6 +95,30 @@ def _recursive_sanitize_specs(cfg, allowed_axes):
                         **{key: _sanitize_partition_spec(val, allowed_axes)})
 
 
+def _recursive_set_block_size(cfg):
+    from axlearn.common.config import ConfigBase
+    from axlearn.common.flash_attention.layer import FlashAttention
+    if isinstance(cfg, ConfigBase):
+        if isinstance(cfg, FlashAttention.Config):
+            logger.info(
+                "Setting tpu_block_size=256 to fit within TPU v6e VMEM limit")
+            cfg.tpu_block_size = 256
+            if getattr(cfg, 'backend_overrides', None) is not None:
+                cfg.backend_overrides["splash_block_q"] = 256
+                cfg.backend_overrides["splash_block_kv"] = 256
+                cfg.backend_overrides["splash_block_kv_compute"] = 256
+        for key in cfg.keys():
+            val = getattr(cfg, key)
+            if isinstance(val, dict):
+                for v in val.values():
+                    _recursive_set_block_size(v)
+            elif isinstance(val, (list, tuple)):
+                for item in val:
+                    _recursive_set_block_size(item)
+            elif hasattr(val, 'klass') or isinstance(val, ConfigBase):
+                _recursive_set_block_size(val)
+
+
 class AxLearnForCausalLM(nnx.Module):
 
     def __init__(self, vllm_config: VllmConfig, rng_key: jax.Array,
@@ -208,6 +232,7 @@ class AxLearnForCausalLM(nnx.Module):
             f"Sanitizing model PartitionSpecs to match active compilation mesh axes: {allowed_axes}"
         )
         _recursive_sanitize_specs(self.axlearn_model_config, allowed_axes)
+        _recursive_set_block_size(self.axlearn_model_config)
 
         with self.mesh:
             self.model = self.axlearn_model_config.instantiate(parent=None)
