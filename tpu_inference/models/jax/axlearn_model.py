@@ -201,11 +201,14 @@ class AxLearnForCausalLM(nnx.Module):
                 eos_token_id=model_config_hf.eos_token_id,
             ).set(name=model_name or "axlearn_model")
 
+        abstract_mesh = jax.sharding.get_abstract_mesh()
+        allowed_axes = abstract_mesh.axis_names if not abstract_mesh.empty else (
+            "model", "expert")
         logger.info(
-            f"Sanitizing model PartitionSpecs to match serving mesh axes: {self.mesh.axis_names}"
+            f"Sanitizing model PartitionSpecs to match active compilation mesh axes: {allowed_axes}"
         )
-        _recursive_sanitize_specs(self.axlearn_model_config,
-                                  self.mesh.axis_names)
+        _recursive_sanitize_specs(self.axlearn_model_config, allowed_axes)
+
         with self.mesh:
             self.model = self.axlearn_model_config.instantiate(parent=None)
 
