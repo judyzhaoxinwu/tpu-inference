@@ -38,6 +38,63 @@ def register():
     logger.info("Successfully registered AxLearnForCausalLM model.")
 
 
+def _sanitize_partition_spec(spec, allowed_axes):
+    if spec is None:
+        return None
+    from jax.sharding import PartitionSpec
+    if isinstance(spec, PartitionSpec):
+        new_axes = []
+        for axis in spec:
+            if isinstance(axis, tuple):
+                # Filter out axes that are not in the serving mesh
+                filtered = tuple(a for a in axis if a in allowed_axes)
+                if len(filtered) == 1:
+                    new_axes.append(filtered[0])
+                elif len(filtered) > 1:
+                    new_axes.append(filtered)
+                else:
+                    new_axes.append(None)
+            else:
+                new_axes.append(axis if axis in allowed_axes else None)
+        return PartitionSpec(*new_axes)
+    return spec
+
+
+def _recursive_sanitize_specs(cfg, allowed_axes):
+    from axlearn.common.config import ConfigBase
+    if isinstance(cfg, ConfigBase):
+        for key in cfg.keys():
+            val = getattr(cfg, key)
+            if isinstance(val, dict):
+                from jax.sharding import PartitionSpec
+                new_dict = {}
+                for k, v in val.items():
+                    if isinstance(v, PartitionSpec):
+                        new_dict[k] = _sanitize_partition_spec(v, allowed_axes)
+                    else:
+                        new_dict[k] = v
+                        _recursive_sanitize_specs(v, allowed_axes)
+                cfg.set(**{key: new_dict})
+            elif isinstance(val, (list, tuple)):
+                from jax.sharding import PartitionSpec
+                new_list = []
+                for item in val:
+                    if isinstance(item, PartitionSpec):
+                        new_list.append(
+                            _sanitize_partition_spec(item, allowed_axes))
+                    else:
+                        new_list.append(item)
+                        _recursive_sanitize_specs(item, allowed_axes)
+                cfg.set(**{key: type(val)(new_list)})
+            elif hasattr(val, 'klass') or isinstance(val, ConfigBase):
+                _recursive_sanitize_specs(val, allowed_axes)
+            else:
+                from jax.sharding import PartitionSpec
+                if isinstance(val, PartitionSpec):
+                    cfg.set(
+                        **{key: _sanitize_partition_spec(val, allowed_axes)})
+
+
 class AxLearnForCausalLM(nnx.Module):
 
     def __init__(self, vllm_config: VllmConfig, rng_key: jax.Array,
@@ -59,13 +116,16 @@ class AxLearnForCausalLM(nnx.Module):
 
         # Register the remapped mesh globally in AxLearn's physical mesh fallback
         from axlearn.common.utils import thread_resources
-        thread_resources.env = thread_resources.env._replace(physical_mesh=self.mesh)
+        thread_resources.env = thread_resources.env._replace(
+            physical_mesh=self.mesh)
 
         # Dynamic imports inside active JAX Mesh context manager to force shard_map axis binding!
         with self.mesh:
-            from axlearn.common.attention import (FusedGroupedQKVLinear, FusedQKVLinear,
-                                              GroupedQueryAttention,
-                                              MultiheadAttention, RoFormerQKVLinear)
+            from axlearn.common.attention import (FusedGroupedQKVLinear,
+                                                  FusedQKVLinear,
+                                                  GroupedQueryAttention,
+                                                  MultiheadAttention,
+                                                  RoFormerQKVLinear)
             from axlearn.common.layers import RMSNorm
             from axlearn.experiments.text.gpt.c4_trainer import \
                 named_trainer_configs as c4_configs
@@ -141,6 +201,11 @@ class AxLearnForCausalLM(nnx.Module):
                 eos_token_id=model_config_hf.eos_token_id,
             ).set(name=model_name or "axlearn_model")
 
+        logger.info(
+            f"Sanitizing model PartitionSpecs to match serving mesh axes: {self.mesh.axis_names}"
+        )
+        _recursive_sanitize_specs(self.axlearn_model_config,
+                                  self.mesh.axis_names)
         with self.mesh:
             self.model = self.axlearn_model_config.instantiate(parent=None)
 
@@ -234,8 +299,8 @@ class AxLearnForCausalLM(nnx.Module):
             )
 
             from axlearn.common.checkpointer import CheckpointValidationType
-            from axlearn.common.state_builder import (Builder,
-                                                      TensorStoreStateStorageBuilder)
+            from axlearn.common.state_builder import (
+                Builder, TensorStoreStateStorageBuilder)
             with self.mesh:
                 target_specs = dict(
                     model=self.model.create_parameter_specs_recursively())
