@@ -101,12 +101,12 @@ def _recursive_set_block_size(cfg):
     if isinstance(cfg, ConfigBase):
         if isinstance(cfg, FlashAttention.Config):
             logger.info(
-                "Setting tpu_block_size=256 to fit within TPU v6e VMEM limit")
-            cfg.tpu_block_size = 256
+                "Setting tpu_block_size=128 to fit within TPU v6e VMEM limit")
+            cfg.tpu_block_size = 128
             if getattr(cfg, 'backend_overrides', None) is not None:
-                cfg.backend_overrides["splash_block_q"] = 256
-                cfg.backend_overrides["splash_block_kv"] = 256
-                cfg.backend_overrides["splash_block_kv_compute"] = 256
+                cfg.backend_overrides["splash_block_q"] = 128
+                cfg.backend_overrides["splash_block_kv"] = 128
+                cfg.backend_overrides["splash_block_kv_compute"] = 128
         for key in cfg.keys():
             val = getattr(cfg, key)
             if isinstance(val, dict):
