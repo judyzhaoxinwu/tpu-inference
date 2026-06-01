@@ -119,6 +119,27 @@ def _recursive_set_block_size(cfg):
                 _recursive_set_block_size(val)
 
 
+def _recursive_set_outer_batch(cfg, outer_batch_size):
+    from axlearn.common.config import ConfigBase
+
+    if isinstance(cfg, ConfigBase):
+        if hasattr(cfg, "outer_batch"):
+            logger.info(
+                f"Dynamically setting MoE outer_batch to {outer_batch_size} to match serving mesh"
+            )
+            cfg.outer_batch = outer_batch_size
+        for key in cfg.keys():
+            val = getattr(cfg, key)
+            if isinstance(val, dict):
+                for v in val.values():
+                    _recursive_set_outer_batch(v, outer_batch_size)
+            elif isinstance(val, (list, tuple)):
+                for item in val:
+                    _recursive_set_outer_batch(item, outer_batch_size)
+            elif hasattr(val, "klass") or isinstance(val, ConfigBase):
+                _recursive_set_outer_batch(val, outer_batch_size)
+
+
 class AxLearnForCausalLM(nnx.Module):
 
     def __init__(self, vllm_config: VllmConfig, rng_key: jax.Array,
@@ -233,6 +254,13 @@ class AxLearnForCausalLM(nnx.Module):
         )
         _recursive_sanitize_specs(self.axlearn_model_config, allowed_axes)
         _recursive_set_block_size(self.axlearn_model_config)
+
+        # Dynamically calculate MoE outer batch size from active serving mesh
+        outer_batch_size = 1
+        for axis in ("data", "fsdp"):
+            if axis in self.mesh.shape:
+                outer_batch_size *= self.mesh.shape[axis]
+        _recursive_set_outer_batch(self.axlearn_model_config, outer_batch_size)
 
         with self.mesh:
             self.model = self.axlearn_model_config.instantiate(parent=None)
