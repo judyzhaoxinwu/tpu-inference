@@ -180,8 +180,15 @@ class AxLearnForCausalLM(nnx.Module):
                 named_trainer_configs as pajama_configs
 
         model_config_hf = vllm_config.model_config.hf_config
-        self.hidden_dim = model_config_hf.hidden_size
-        self.vocab_size = model_config_hf.vocab_size
+        if (hasattr(model_config_hf, "thinker_config")
+                and hasattr(model_config_hf.thinker_config, "text_config")):
+            model_config_hf = model_config_hf.thinker_config.text_config
+        elif hasattr(model_config_hf, "text_config"):
+            model_config_hf = model_config_hf.text_config
+
+        self.hidden_dim = getattr(model_config_hf, "hidden_size",
+                                  getattr(model_config_hf, "hidden_dim", None))
+        self.vocab_size = getattr(model_config_hf, "vocab_size", None)
         axlearn_cfg = getattr(vllm_config, "additional_config",
                               {}).get("axlearn_config", {})
         model_name = axlearn_cfg.get("model_name", None)
