@@ -294,8 +294,10 @@ class AxLearnForCausalLM(nnx.Module):
               file=sys.stderr)
         print("VLLM MODEL MESH:", self.mesh, file=sys.stderr)
         input_ids_2d = jnp.expand_dims(input_ids, axis=1)
-        positions_2d = jnp.expand_dims(attention_metadata.input_positions,
-                                       axis=1)
+        pos = attention_metadata.input_positions
+        if pos.ndim > 1:
+            pos = pos[0]
+        positions_2d = jnp.expand_dims(pos, axis=1)
 
         input_batch = dict(
             input_ids=input_ids_2d,
