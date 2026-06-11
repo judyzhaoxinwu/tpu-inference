@@ -13,7 +13,7 @@
 # limitations under the License.
 """Wrapper for AXLearn models."""
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -392,3 +392,10 @@ class AxLearnForCausalLM(nnx.Module):
             init_state = self.model.initialize_parameters_recursively(rng_key)
 
         self.axlearn_state = nnx.Param(init_state)
+
+    def get_mrope_input_positions(
+            self, prompt_token_ids: List[int],
+            mm_features: List[Any]) -> Tuple[jax.Array, int]:
+        seq_len = len(prompt_token_ids)
+        positions = jnp.vstack([jnp.arange(seq_len, dtype=jnp.int32)] * 3)
+        return positions, 0
