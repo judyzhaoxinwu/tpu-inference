@@ -13,6 +13,7 @@
 # limitations under the License.
 """Wrapper for AXLearn models."""
 
+import threading
 from typing import Any, List, Optional, Tuple
 
 import jax
@@ -29,6 +30,13 @@ from tpu_inference.models.jax.jax_intermediate_tensor import \
     JaxIntermediateTensors
 
 logger = init_logger(__name__)
+
+# Thread-local storage to inject active vLLM Key-Value cache arrays and attention metadata
+# directly into AxLearn's internal JAX SelfAttention evaluation layer.
+_vllm_context = threading.local()
+_vllm_context.kv_caches = None
+_vllm_context.attention_metadata = None
+_vllm_context.layer_index = 0
 
 
 def register():
@@ -60,9 +68,25 @@ def _sanitize_partition_spec(spec, allowed_axes):
     return spec
 
 
-def _recursive_sanitize_specs(cfg, allowed_axes):
+def _recursive_sanitize_specs(cfg, allowed_axes, mha_cls=None, gqa_cls=None):
+    from axlearn.common.attention import (GroupedQueryAttention,
+                                          TransformerAttentionLayer)
     from axlearn.common.config import ConfigBase
+    from axlearn.common.repeat import Repeat
     if isinstance(cfg, ConfigBase):
+        if isinstance(cfg, Repeat.Config):
+            cfg.unroll = True
+        if mha_cls and gqa_cls and isinstance(
+                cfg, TransformerAttentionLayer.Config):
+            old_hidden_dim = cfg.attention.hidden_dim
+            old_per_head_dim = getattr(cfg.attention, "per_head_dim", None)
+            is_gqa = issubclass(cfg.attention.klass, GroupedQueryAttention)
+            target_cls = gqa_cls if is_gqa else mha_cls
+            cfg.attention = target_cls.default_config()
+            if old_hidden_dim:
+                cfg.attention.hidden_dim = old_hidden_dim
+            if old_per_head_dim:
+                cfg.attention.per_head_dim = old_per_head_dim
         for key in cfg.keys():
             val = getattr(cfg, key)
             if isinstance(val, dict):
@@ -73,7 +97,8 @@ def _recursive_sanitize_specs(cfg, allowed_axes):
                         new_dict[k] = _sanitize_partition_spec(v, allowed_axes)
                     else:
                         new_dict[k] = v
-                        _recursive_sanitize_specs(v, allowed_axes)
+                        _recursive_sanitize_specs(v, allowed_axes, mha_cls,
+                                                  gqa_cls)
                 cfg.set(**{key: new_dict})
             elif isinstance(val, (list, tuple)):
                 from jax.sharding import PartitionSpec
@@ -84,10 +109,11 @@ def _recursive_sanitize_specs(cfg, allowed_axes):
                             _sanitize_partition_spec(item, allowed_axes))
                     else:
                         new_list.append(item)
-                        _recursive_sanitize_specs(item, allowed_axes)
+                        _recursive_sanitize_specs(item, allowed_axes, mha_cls,
+                                                  gqa_cls)
                 cfg.set(**{key: type(val)(new_list)})
             elif hasattr(val, 'klass') or isinstance(val, ConfigBase):
-                _recursive_sanitize_specs(val, allowed_axes)
+                _recursive_sanitize_specs(val, allowed_axes, mha_cls, gqa_cls)
             else:
                 from jax.sharding import PartitionSpec
                 if isinstance(val, PartitionSpec):
@@ -172,12 +198,67 @@ class AxLearnForCausalLM(nnx.Module):
                                                   MultiheadAttention,
                                                   RoFormerQKVLinear)
             from axlearn.common.layers import RMSNorm
+            from axlearn.common.utils import ForwardMode, Tensor
             from axlearn.experiments.text.gpt.c4_trainer import \
                 named_trainer_configs as c4_configs
             from axlearn.experiments.text.gpt.common import \
                 model_config as common_model_config
             from axlearn.experiments.text.gpt.pajama_trainer import \
                 named_trainer_configs as pajama_configs
+
+            class VllmAttentionMixin:
+
+                def _forward(
+                    self,
+                    *,
+                    mode: ForwardMode,
+                    query: Tensor,
+                    key=None,
+                    value=None,
+                    kv_state=None,
+                    attention_logit_biases=None,
+                    segment_ids=None,
+                    query_positions=None,
+                    cached_states=None,
+                    return_aux=None,
+                    page_pool=None,
+                ):
+                    query_positions = jnp.arange(
+                        query.shape[1]
+                    )[None] if query_positions is None else query_positions
+                    q_proj, k_proj, v_proj = self.i_proj(
+                        query, query_positions=query_positions)
+
+                    kv_cache_array = _vllm_context.kv_caches[
+                        _vllm_context.layer_index]
+                    md = _vllm_context.attention_metadata
+
+                    from tpu_inference.layers.common.attention_interface import \
+                        attention
+                    new_kv_cache, outputs = attention(
+                        kv_cache_array,
+                        q_proj,
+                        k_proj,
+                        v_proj,
+                        md,
+                        self.mesh,
+                        self.per_head_dim(),
+                    )
+
+                    _vllm_context.kv_caches[
+                        _vllm_context.layer_index] = new_kv_cache
+                    _vllm_context.layer_index += 1
+
+                    out = self.o_proj(outputs)
+                    return dict(), self.Output(data=out)
+
+            class VllmMultiheadAttention(VllmAttentionMixin,
+                                         MultiheadAttention):
+                pass
+
+            class VllmGroupedQueryAttention(VllmAttentionMixin,
+                                            GroupedQueryAttention):
+                pass
 
         model_config_hf = vllm_config.model_config.hf_config
         if (hasattr(model_config_hf, "thinker_config")
@@ -215,12 +296,12 @@ class AxLearnForCausalLM(nnx.Module):
             atten_hidden_dim = model_config_hf.num_attention_heads * per_head_dim
 
             if num_kv_heads and num_kv_heads != model_config_hf.num_attention_heads:
-                atten_cfg = GroupedQueryAttention.default_config().set(
+                atten_cfg = VllmGroupedQueryAttention.default_config().set(
                     hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedGroupedQKVLinear.default_config(
                 ).set(num_kv_heads=num_kv_heads)
             else:
-                atten_cfg = MultiheadAttention.default_config().set(
+                atten_cfg = VllmMultiheadAttention.default_config().set(
                     hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedQKVLinear.default_config()
 
@@ -269,7 +350,9 @@ class AxLearnForCausalLM(nnx.Module):
         logger.info(
             f"Sanitizing model PartitionSpecs to match active compilation mesh axes: {allowed_axes}"
         )
-        _recursive_sanitize_specs(self.axlearn_model_config, allowed_axes)
+        _recursive_sanitize_specs(self.axlearn_model_config, allowed_axes,
+                                  VllmMultiheadAttention,
+                                  VllmGroupedQueryAttention)
         _recursive_set_block_size(self.axlearn_model_config)
 
         # Dynamically calculate MoE outer batch size from active serving mesh
@@ -303,6 +386,11 @@ class AxLearnForCausalLM(nnx.Module):
               jax.sharding.get_abstract_mesh(),
               file=sys.stderr)
         print("VLLM MODEL MESH:", self.mesh, file=sys.stderr)
+
+        _vllm_context.kv_caches = list(kv_caches)
+        _vllm_context.attention_metadata = attention_metadata
+        _vllm_context.layer_index = 0
+
         input_ids_2d = jnp.expand_dims(input_ids, axis=1)
         pos = attention_metadata.input_positions
         if pos.ndim > 1:
@@ -334,7 +422,9 @@ class AxLearnForCausalLM(nnx.Module):
         loss, aux_outputs = outputs
         hidden_states = aux_outputs["hidden_states"]
         hidden_states = hidden_states.reshape((-1, hidden_states.shape[-1]))
-        return kv_caches, hidden_states, [], None
+
+        updated_kv_caches = list(_vllm_context.kv_caches)
+        return updated_kv_caches, hidden_states, [], None
 
     def compute_logits(self, hidden_states: jax.Array) -> jax.Array:
         hidden_states_3d = jnp.expand_dims(hidden_states, axis=1)
