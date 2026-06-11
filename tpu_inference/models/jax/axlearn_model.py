@@ -206,21 +206,22 @@ class AxLearnForCausalLM(nnx.Module):
             logger.info(
                 f"Named config '{model_name}' not found in AxLearn registry. Mapping properties model-agnostically from HF config."
             )
-            # 1. Resolve Grouped Query Attention (GQA) and head dim parameters
+            # 1. Resolve Grouped Query Attention (GQA) and attention hidden dim parameters
             num_kv_heads = getattr(model_config_hf, "num_key_value_heads",
                                    None)
             per_head_dim = getattr(model_config_hf, "head_dim", None)
             if per_head_dim is None:
                 per_head_dim = getattr(model_config_hf, "per_head_dim", 128)
+            atten_hidden_dim = model_config_hf.num_attention_heads * per_head_dim
 
             if num_kv_heads and num_kv_heads != model_config_hf.num_attention_heads:
                 atten_cfg = GroupedQueryAttention.default_config().set(
-                    per_head_dim=per_head_dim)
+                    hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedGroupedQKVLinear.default_config(
                 ).set(num_kv_heads=num_kv_heads)
             else:
                 atten_cfg = MultiheadAttention.default_config().set(
-                    per_head_dim=per_head_dim)
+                    hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedQKVLinear.default_config()
 
             # 2. Setup Rotary Position Embeddings (RoPE)
