@@ -244,7 +244,10 @@ class AxLearnForCausalLM(nnx.Module):
                 vocab_size=model_config_hf.vocab_size,
                 activation_fn=("nn.silu", "linear"),  # SwiGLU
                 ffn_dim=model_config_hf.intermediate_size,
-                normalization=RMSNorm,
+                normalization=RMSNorm.default_config().set(
+                    eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
+                    forward_dtype=jnp.float32,
+                ),
                 attention_cfg=atten_cfg,
                 attention_qkv_linear=attention_qkv_linear,
                 ffn_layer_types=ffn_layer_types,
