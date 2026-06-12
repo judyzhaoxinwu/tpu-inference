@@ -78,15 +78,9 @@ def _recursive_sanitize_specs(cfg, allowed_axes, mha_cls=None, gqa_cls=None):
             cfg.unroll = True
         if mha_cls and gqa_cls and isinstance(
                 cfg, TransformerAttentionLayer.Config):
-            old_hidden_dim = cfg.attention.hidden_dim
-            old_per_head_dim = getattr(cfg.attention, "per_head_dim", None)
             is_gqa = issubclass(cfg.attention.klass, GroupedQueryAttention)
             target_cls = gqa_cls if is_gqa else mha_cls
-            cfg.attention = target_cls.default_config()
-            if old_hidden_dim:
-                cfg.attention.hidden_dim = old_hidden_dim
-            if old_per_head_dim:
-                cfg.attention.per_head_dim = old_per_head_dim
+            cfg.attention.set(klass=target_cls)
         for key in cfg.keys():
             val = getattr(cfg, key)
             if isinstance(val, dict):
