@@ -192,13 +192,11 @@ class AxLearnForCausalLM(nnx.Module):
 
         # Dynamic imports inside active JAX Mesh context manager to force shard_map axis binding!
         with self.mesh:
-            from axlearn.common.attention import (FusedGroupedQKVLinear,
-                                                  FusedQKVLinear,
-                                                  GroupedQueryAttention,
-                                                  MultiheadAttention,
-                                                  RoFormerQKVLinear)
+            from axlearn.common.attention import (
+                ForwardMode, FusedGroupedQKVLinear, FusedQKVLinear,
+                GroupedQueryAttention, MultiheadAttention, RoFormerQKVLinear)
             from axlearn.common.layers import RMSNorm
-            from axlearn.common.utils import ForwardMode, Tensor
+            from axlearn.common.utils import Tensor
             from axlearn.experiments.text.gpt.c4_trainer import \
                 named_trainer_configs as c4_configs
             from axlearn.experiments.text.gpt.common import \
