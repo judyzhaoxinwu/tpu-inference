@@ -261,9 +261,9 @@ class AxLearnForCausalLM(nnx.Module):
 
         self.hidden_dim = getattr(model_config_hf, "hidden_size",
                                   getattr(model_config_hf, "hidden_dim", None))
-        self.vocab_size = getattr(model_config_hf, "vocab_size", None)
         axlearn_cfg = getattr(vllm_config, "additional_config",
                               {}).get("axlearn_config", {})
+        self.vocab_size = axlearn_cfg.get("vocab_size", getattr(model_config_hf, "vocab_size", None))
         model_name = axlearn_cfg.get("model_name", None)
 
         configs_map = {}
@@ -314,15 +314,16 @@ class AxLearnForCausalLM(nnx.Module):
             if num_experts is not None:
                 from axlearn.common.mixture_of_experts import \
                     TransformerFeedForwardMoE
-                ffn_layer_types = ["dense", "sparse"]
+                ffn_layer_types = ["sparse"]
                 expert_cfg = TransformerFeedForwardMoE.default_config().set(
                     num_experts=num_experts, num_groups=1)
 
+            from axlearn.common import decoder
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
                 num_heads=model_config_hf.num_attention_heads,
-                vocab_size=model_config_hf.vocab_size,
+                vocab_size=axlearn_cfg.get("vocab_size", model_config_hf.vocab_size),
                 activation_fn=("nn.silu", "linear"),  # SwiGLU
                 ffn_dim=model_config_hf.intermediate_size,
                 normalization=RMSNorm.default_config().set(
@@ -333,9 +334,16 @@ class AxLearnForCausalLM(nnx.Module):
                 attention_qkv_linear=attention_qkv_linear,
                 ffn_layer_types=ffn_layer_types,
                 expert_cfg=expert_cfg,
+                lm_head_cfg=decoder.LmHead.default_config(),
                 pad_token_id=model_config_hf.pad_token_id,
                 eos_token_id=model_config_hf.eos_token_id,
             ).set(name=model_name or "axlearn_model")
+
+            self.axlearn_model_config.decoder.output_norm = RMSNorm.default_config().set(
+                input_dim=model_config_hf.hidden_size,
+                eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
+                forward_dtype=jnp.float32,
+            )
 
         abstract_mesh = jax.sharding.get_abstract_mesh()
         allowed_axes = abstract_mesh.axis_names if not abstract_mesh.empty else (
