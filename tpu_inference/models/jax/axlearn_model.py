@@ -74,6 +74,8 @@ def _recursive_sanitize_specs(cfg, allowed_axes, mha_cls=None, gqa_cls=None):
     from axlearn.common.config import ConfigBase
     from axlearn.common.repeat import Repeat
     if isinstance(cfg, ConfigBase):
+        if hasattr(cfg, "remat_spec"):
+            cfg.set(remat_spec=None)
         if isinstance(cfg, Repeat.Config):
             cfg.unroll = True
         if mha_cls and gqa_cls and isinstance(
