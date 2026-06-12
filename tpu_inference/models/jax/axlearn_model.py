@@ -318,9 +318,10 @@ class AxLearnForCausalLM(nnx.Module):
             ffn_layer_types = None
             expert_cfg = None
             if num_experts is not None:
-                from axlearn.common.mixture_of_experts import MixtureOfExperts
+                from axlearn.common.mixture_of_experts import \
+                    TransformerFeedForwardMoE
                 ffn_layer_types = ["dense", "sparse"]
-                expert_cfg = MixtureOfExperts.default_config().set(
+                expert_cfg = TransformerFeedForwardMoE.default_config().set(
                     num_experts=num_experts)
 
             self.axlearn_model_config = common_model_config(
