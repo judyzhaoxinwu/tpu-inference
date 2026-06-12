@@ -263,7 +263,10 @@ class AxLearnForCausalLM(nnx.Module):
                                   getattr(model_config_hf, "hidden_dim", None))
         axlearn_cfg = getattr(vllm_config, "additional_config",
                               {}).get("axlearn_config", {})
-        self.vocab_size = axlearn_cfg.get("vocab_size", getattr(model_config_hf, "vocab_size", None))
+        hf_vocab = getattr(model_config_hf, "vocab_size", None)
+        if hf_vocab == 152064:
+            hf_vocab = 151936
+        self.vocab_size = axlearn_cfg.get("vocab_size", hf_vocab)
         model_name = axlearn_cfg.get("model_name", None)
 
         configs_map = {}
@@ -296,6 +299,16 @@ class AxLearnForCausalLM(nnx.Module):
                 atten_cfg = VllmMultiheadAttention.default_config().set(
                     hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedQKVLinear.default_config()
+
+            from axlearn.common.attention import ScaleKey, ScaleQuery
+            norm_cfg = RMSNorm.default_config().set(
+                eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
+                forward_dtype=jnp.float32,
+            )
+            atten_cfg.set(
+                query_scale=ScaleQuery.default_config().set(norm=norm_cfg.clone()),
+                key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
+            )
 
             # 2. Setup Rotary Position Embeddings (RoPE)
             attention_qkv_linear = RoFormerQKVLinear.default_config().set(
