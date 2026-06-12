@@ -336,7 +336,7 @@ class AxLearnForCausalLM(nnx.Module):
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
                 num_heads=model_config_hf.num_attention_heads,
-                vocab_size=axlearn_cfg.get("vocab_size", model_config_hf.vocab_size),
+                vocab_size=self.vocab_size,
                 activation_fn=("nn.silu", "linear"),  # SwiGLU
                 ffn_dim=model_config_hf.intermediate_size,
                 normalization=RMSNorm.default_config().set(
