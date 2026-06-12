@@ -325,11 +325,21 @@ class AxLearnForCausalLM(nnx.Module):
             ffn_layer_types = None
             expert_cfg = None
             if num_experts is not None:
-                from axlearn.common.mixture_of_experts import \
-                    TransformerFeedForwardMoE
+                from axlearn.common.mixture_of_experts import (
+                    TopKDropFreeGating, TransformerFeedForwardDropFreeMoE)
                 ffn_layer_types = ["sparse"]
-                expert_cfg = TransformerFeedForwardMoE.default_config().set(
-                    num_experts=num_experts, num_groups=1)
+                num_experts_per_token = getattr(
+                    model_config_hf, "num_experts_per_tok",
+                    getattr(model_config_hf, "num_experts_per_token", 8))
+                expert_cfg = TransformerFeedForwardDropFreeMoE.default_config(
+                ).set(
+                    num_experts=num_experts,
+                    num_groups=1,
+                    gating=TopKDropFreeGating.default_config().set(
+                        num_experts_per_token=num_experts_per_token,
+                        train_capacity_factor=0,
+                    ),
+                )
 
             from axlearn.common import decoder
             self.axlearn_model_config = common_model_config(
