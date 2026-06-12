@@ -316,7 +316,7 @@ class AxLearnForCausalLM(nnx.Module):
                     TransformerFeedForwardMoE
                 ffn_layer_types = ["dense", "sparse"]
                 expert_cfg = TransformerFeedForwardMoE.default_config().set(
-                    num_experts=num_experts)
+                    num_experts=num_experts, num_groups=1)
 
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
