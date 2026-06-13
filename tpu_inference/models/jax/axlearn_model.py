@@ -341,6 +341,11 @@ class AxLearnForCausalLM(nnx.Module):
                         "me": PartitionSpec(None, None),
                         "emh": PartitionSpec("model", None, None),
                         "ehm": PartitionSpec("model", None, None),
+                        "ogsm": PartitionSpec("data", "expert", None, "model"),
+                        "ogsec": PartitionSpec("data", "expert", None, None, None),
+                        "oegcm": PartitionSpec("data", "expert", None, None, "model"),
+                        "ogecm": PartitionSpec("data", "expert", None, None, "model"),
+                        "oegch": PartitionSpec("data", "expert", None, None, "model"),
                     },
                     gating=TopKDropFreeGating.default_config().set(
                         num_experts_per_token=num_experts_per_token,
