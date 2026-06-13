@@ -336,6 +336,7 @@ class AxLearnForCausalLM(nnx.Module):
                 from axlearn.common.utils import PartitionSpec
                 expert_cfg = TransformerFeedForwardMoE.default_config().set(
                     num_experts=num_experts,
+                    num_groups=1,
                     dim_to_mesh_axis_map={
                         "me": PartitionSpec(None, None),
                         "emh": PartitionSpec("model", None, None),
