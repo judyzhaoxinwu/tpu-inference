@@ -74,8 +74,6 @@ def _recursive_sanitize_specs(cfg, allowed_axes, mha_cls=None, gqa_cls=None):
     from axlearn.common.config import ConfigBase
     from axlearn.common.repeat import Repeat
     if isinstance(cfg, ConfigBase):
-        if hasattr(cfg, "remat_spec"):
-            cfg.set(remat_spec=None)
         if isinstance(cfg, Repeat.Config):
             cfg.unroll = True
         if mha_cls and gqa_cls and isinstance(
@@ -328,24 +326,34 @@ class AxLearnForCausalLM(nnx.Module):
             expert_cfg = None
             if num_experts is not None:
                 from axlearn.common.mixture_of_experts import (
-                    TopKDropFreeGating, TransformerFeedForwardMoE)
+                    TopKDropFreeGating, TransformerFeedForwardDropFreeMoE)
                 ffn_layer_types = ["sparse"]
                 num_experts_per_token = getattr(
                     model_config_hf, "num_experts_per_tok",
                     getattr(model_config_hf, "num_experts_per_token", 8))
                 from axlearn.common.utils import PartitionSpec
-                expert_cfg = TransformerFeedForwardMoE.default_config().set(
+                expert_cfg = TransformerFeedForwardDropFreeMoE.default_config(
+                ).set(
                     num_experts=num_experts,
                     num_groups=1,
+                    tiling=(128, 512, 512),
                     dim_to_mesh_axis_map={
                         "me": PartitionSpec(None, None),
-                        "emh": PartitionSpec("model", None, None),
-                        "ehm": PartitionSpec("model", None, None),
+                        "emh": PartitionSpec("expert", ("fsdp", "seq"), "model"),
+                        "ehm": PartitionSpec("expert", "model", ("fsdp", "seq")),
                         "ogsm": PartitionSpec("data", "expert", None, "model"),
                         "ogsec": PartitionSpec("data", "expert", None, None, None),
                         "oegcm": PartitionSpec("data", "expert", None, None, "model"),
                         "ogecm": PartitionSpec("data", "expert", None, None, "model"),
                         "oegch": PartitionSpec("data", "expert", None, None, "model"),
+                    },
+                    input_dim_to_partition_spec={
+                        "bsm": PartitionSpec(("data", "expert", "fsdp"), "seq", None),
+                    },
+                    output_dim_to_partition_spec={
+                        "bsm": PartitionSpec(("data", "expert", "fsdp"), "seq", "model"),
+                        "emh": PartitionSpec("expert", None, "model"),
+                        "ehm": PartitionSpec("expert", "model", None),
                     },
                     gating=TopKDropFreeGating.default_config().set(
                         num_experts_per_token=num_experts_per_token,
