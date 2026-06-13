@@ -341,16 +341,16 @@ class AxLearnForCausalLM(nnx.Module):
                     tiling=(128, 512, 512),
                     dim_to_mesh_axis_map={
                         "me": PartitionSpec(None, None),
-                        "emh": PartitionSpec("model", None, None),
-                        "ehm": PartitionSpec("model", None, None),
+                        "emh": PartitionSpec("expert", ("fsdp", "seq"), "model"),
+                        "ehm": PartitionSpec("expert", "model", ("fsdp", "seq")),
                     },
                     input_dim_to_partition_spec={
                         "bsm": PartitionSpec(("data", "expert", "fsdp"), "seq", None),
                     },
                     output_dim_to_partition_spec={
                         "bsm": PartitionSpec(("data", "expert", "fsdp"), "seq", "model"),
-                        "emh": PartitionSpec("model", None, None),
-                        "ehm": PartitionSpec("model", None, None),
+                        "emh": PartitionSpec("expert", None, "model"),
+                        "ehm": PartitionSpec("expert", "model", None),
                     },
                     gating=TopKDropFreeGating.default_config().set(
                         num_experts_per_token=num_experts_per_token,
