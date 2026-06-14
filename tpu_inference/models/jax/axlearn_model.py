@@ -397,8 +397,9 @@ class AxLearnForCausalLM(nnx.Module):
         _recursive_set_outer_batch(self.axlearn_model_config, outer_batch_size)
 
         # Explicitly enforce highly efficient layer-wise Remat boundaries to reduce XLA compilation temporaries from 18 GB down to 256 MB
-        from axlearn.common.checkpointer import (
-            RematSpec, save_or_offload_flash_attention_policy)
+        from axlearn.common.base_layer import RematSpec
+        from axlearn.common.flash_attention.remat import (
+            save_or_offload_flash_attention_policy)
         try:
             self.axlearn_model_config.decoder.transformer.layer.set(
                 remat_spec=RematSpec(
