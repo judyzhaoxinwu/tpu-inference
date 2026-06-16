@@ -177,7 +177,7 @@ class TPUWorker(WorkerBase):
                 logger.info(
                     "Initializing JAX distributed system for multi-host serving..."
                 )
-                jax.distributed.initialize()
+                jax.distributed.initialize(initialization_timeout=120)
                 logger.info(
                     f"JAX distributed system initialized successfully. "
                     f"Process ID: {jax.process_index()} / {jax.process_count()}"
