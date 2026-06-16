@@ -163,8 +163,8 @@ def hbm_usage_bytes(devices: Any) -> List[Tuple[int, int]]:
                     break
             except Exception as e:
                 logger.warning(
-                    "Failed to get memory stats for device %s: %s. ", device, e
-                )
+                    "Failed to get memory stats for device %s: %s. ", device,
+                    e)
 
         # Fallback if we couldn't retrieve stats from any local device
         if local_stats is None:
