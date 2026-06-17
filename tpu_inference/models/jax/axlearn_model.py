@@ -305,15 +305,14 @@ class AxLearnForCausalLM(nnx.Module):
                 eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
                 forward_dtype=jnp.float32,
             )
-            atten_cfg.set(
-                query_scale=ScaleQuery.default_config().set(norm=norm_cfg.clone()),
-                key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
-            )
 
-            # 2. Setup Rotary Position Embeddings (RoPE)
+            # 2. Setup Rotary Position Embeddings (RoPE) and Q/K Scaling
             attention_qkv_linear = RoFormerQKVLinear.default_config().set(
                 input_linear=atten_input_linear,
                 rotary_value=False,
+                query_scale=ScaleQuery.default_config().set(
+                    norm=norm_cfg.clone()),
+                key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
             rope_theta = getattr(model_config_hf, "rope_theta", 10000.0)
             attention_qkv_linear.rope_pos_emb_layer.set(theta=rope_theta)
@@ -336,14 +335,22 @@ class AxLearnForCausalLM(nnx.Module):
                     num_experts=num_experts,
                     num_groups=1,
                     dim_to_mesh_axis_map={
-                        "me": PartitionSpec(None, None),
-                        "emh": PartitionSpec("model", None, None),
-                        "ehm": PartitionSpec("model", None, None),
-                        "ogsm": PartitionSpec("data", "expert", None, "model"),
-                        "ogsec": PartitionSpec("data", "expert", None, None, None),
-                        "oegcm": PartitionSpec("data", "expert", None, None, "model"),
-                        "ogecm": PartitionSpec("data", "expert", None, None, "model"),
-                        "oegch": PartitionSpec("data", "expert", None, None, "model"),
+                        "me":
+                        PartitionSpec(None, None),
+                        "emh":
+                        PartitionSpec("model", None, None),
+                        "ehm":
+                        PartitionSpec("model", None, None),
+                        "ogsm":
+                        PartitionSpec("data", "expert", None, "model"),
+                        "ogsec":
+                        PartitionSpec("data", "expert", None, None, None),
+                        "oegcm":
+                        PartitionSpec("data", "expert", None, None, "model"),
+                        "ogecm":
+                        PartitionSpec("data", "expert", None, None, "model"),
+                        "oegch":
+                        PartitionSpec("data", "expert", None, None, "model"),
                     },
                     gating=TopKGating.default_config().set(
                         num_experts_per_token=num_experts_per_token,
@@ -367,12 +374,15 @@ class AxLearnForCausalLM(nnx.Module):
                 attention_qkv_linear=attention_qkv_linear,
                 ffn_layer_types=ffn_layer_types,
                 expert_cfg=expert_cfg,
-                lm_head_cfg=decoder.LmHead.default_config(),
+                lm_head_cfg=None
+                if getattr(model_config_hf, "tie_word_embeddings", False) else
+                decoder.LmHead.default_config(),
                 pad_token_id=model_config_hf.pad_token_id,
                 eos_token_id=model_config_hf.eos_token_id,
             ).set(name=model_name or "axlearn_model")
 
-            self.axlearn_model_config.decoder.output_norm = RMSNorm.default_config().set(
+            self.axlearn_model_config.decoder.output_norm = RMSNorm.default_config(
+            ).set(
                 input_dim=model_config_hf.hidden_size,
                 eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
                 forward_dtype=jnp.float32,
@@ -398,15 +408,14 @@ class AxLearnForCausalLM(nnx.Module):
 
         # Explicitly enforce highly efficient layer-wise Remat boundaries to reduce XLA compilation temporaries from 18 GB down to 256 MB
         from axlearn.common.base_layer import RematSpec
-        from axlearn.common.flash_attention.remat import (
-            save_or_offload_flash_attention_policy)
+        from axlearn.common.flash_attention.remat import \
+            save_or_offload_flash_attention_policy
         try:
             self.axlearn_model_config.decoder.transformer.layer.set(
                 remat_spec=RematSpec(
                     prevent_cse=False,
                     policy=save_or_offload_flash_attention_policy(),
-                )
-            )
+                ))
         except AttributeError:
             pass
 
