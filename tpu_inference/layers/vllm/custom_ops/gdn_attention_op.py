@@ -20,8 +20,21 @@ import torch
 from einops import rearrange
 from torchax.interop import jax_view, torch_view
 from vllm.forward_context import get_forward_context
-from vllm.model_executor.layers.mamba.gdn_linear_attn import \
-    GatedDeltaNetAttention
+
+try:
+    from vllm.model_executor.layers.mamba.gdn_linear_attn import \
+        GatedDeltaNetAttention
+    HAS_GDN = True
+except ImportError:
+    HAS_GDN = False
+
+    # Define a dummy class to prevent NameErrors during class definition
+    class GatedDeltaNetAttention:
+
+        @staticmethod
+        def register_oot(cls):
+            return cls
+
 
 from tpu_inference import envs
 from tpu_inference.layers.common.gdn_attention import (GdnAttentionConfig,
