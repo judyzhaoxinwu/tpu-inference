@@ -509,6 +509,42 @@ class AxLearnForCausalLM(nnx.Module):
                 )
         return logits.squeeze(1)
 
+    def _deinterleave_qkv_weights(self, state):
+        import jax
+        import jax.numpy as jnp
+
+        def leaf_fn(path, val):
+            path_str = "/".join([str(p.key) if hasattr(p, "key") else str(p) for p in path])
+            if "qkv_proj" in path_str and "weight" in path_str:
+                if len(val.shape) == 4:
+                    total_heads = val.shape[2]
+                    # 1. Tiny 0.6B Model (16 Q-heads, 8 KV-heads = 32 total heads)
+                    if total_heads == 32:
+                        logger.info(f"De-interleaving GQA QKV heads on-the-fly for 0.6B model: {path_str}")
+                        perm_indices = []
+                        for g in range(8):
+                            perm_indices.extend([4 * g, 4 * g + 1]) # Queries
+                        for g in range(8):
+                            perm_indices.append(4 * g + 2)         # Keys
+                        for g in range(8):
+                            perm_indices.append(4 * g + 3)         # Values
+                        val = val[:, :, perm_indices, :]
+                    
+                    # 2. Large 30B MoE Model (32 Q-heads, 4 KV-heads = 40 total heads)
+                    elif total_heads == 40:
+                        logger.info(f"De-interleaving GQA QKV heads on-the-fly for 30B model: {path_str}")
+                        perm_indices = []
+                        for g in range(4):
+                            perm_indices.extend(range(10 * g, 10 * g + 8)) # Queries
+                        for g in range(4):
+                            perm_indices.append(10 * g + 8)                # Keys
+                        for g in range(4):
+                            perm_indices.append(10 * g + 9)                # Values
+                        val = val[:, :, perm_indices, :]
+            return val
+
+        return jax.tree_util.tree_map_with_path(leaf_fn, state)
+
     def load_weights(self, rng_key: jax.Array):
         ckpt_path = None
         if "axlearn_config" in self.vllm_config.additional_config:
@@ -542,6 +578,7 @@ class AxLearnForCausalLM(nnx.Module):
                         built_keys=set(),
                     ))
                 init_state = built_state.trainer_state["model"]
+                init_state = self._deinterleave_qkv_weights(init_state)
         else:
             logger.warning(
                 "No checkpoint path provided. Initializing parameters with random noise."
