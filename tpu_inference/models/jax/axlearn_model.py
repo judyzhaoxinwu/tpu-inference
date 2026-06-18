@@ -386,7 +386,7 @@ class AxLearnForCausalLM(nnx.Module):
             def enable_bias_on_layer(layer_cfg):
                 layer_cfg.self_attention.attention.input_linear.i_proj.qkv_proj.set(bias=True)
                 layer_cfg.self_attention.attention.o_proj.set(bias=True)
-            from axlearn.common.transformer import RepeatedTransformerLayer
+            from axlearn.common.attention import RepeatedTransformerLayer
             if issubclass(transformer_cfg.klass, RepeatedTransformerLayer):
                 enable_bias_on_layer(transformer_cfg.layer)
             else:
