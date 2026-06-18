@@ -298,7 +298,7 @@ def _get_nnx_model(
             print(
                 f"=== [MODEL LOADER] token_emb stats ===\n"
                 f"  shape: {w.shape}\n"
-                f"  min/max/mean: {float(jnp.min(w))}/{float(jnp.max(w))}/{float(jnp.mean(w))}\n"
+                f"  min/max/mean: {float(w.min())}/{float(w.max())}/{float(w.mean())}\n"
                 f"=====================================",
                 flush=True
             )
