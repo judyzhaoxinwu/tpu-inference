@@ -237,6 +237,14 @@ class AxLearnForCausalLM(nnx.Module):
                         self.per_head_dim(),
                     )
 
+                    if _vllm_context.layer_index == 0:
+                        print(f"=== [ATTENTION DEBUG] LAYER 0 ===", flush=True)
+                        print(f"  q_proj | shape: {q_proj.shape} | min/max/mean: {float(q_proj.min())}/{float(q_proj.max())}/{float(q_proj.mean())}", flush=True)
+                        print(f"  k_proj | shape: {k_proj.shape} | min/max/mean: {float(k_proj.min())}/{float(k_proj.max())}/{float(k_proj.mean())}", flush=True)
+                        print(f"  v_proj | shape: {v_proj.shape} | min/max/mean: {float(v_proj.min())}/{float(v_proj.max())}/{float(v_proj.mean())}", flush=True)
+                        print(f"  outputs | shape: {outputs.shape} | min/max/mean: {float(outputs.min())}/{float(outputs.max())}/{float(outputs.mean())}", flush=True)
+                        print(f"=================================", flush=True)
+
                     _vllm_context.kv_caches[
                         _vllm_context.layer_index] = new_kv_cache
                     _vllm_context.layer_index += 1
