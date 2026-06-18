@@ -300,7 +300,8 @@ class AxLearnForCausalLM(nnx.Module):
                     hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedQKVLinear.default_config()
 
-            from axlearn.common.attention import ScaleKey, ScaleQuery
+            from axlearn.common.config import config_for_function
+            from axlearn.common.attention import ScaleKey, ScaleQuery, constant_scale_fn
             norm_cfg = RMSNorm.default_config().set(
                 eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
                 forward_dtype=jnp.float32,
@@ -311,7 +312,9 @@ class AxLearnForCausalLM(nnx.Module):
                 input_linear=atten_input_linear,
                 rotary_value=False,
                 query_scale=ScaleQuery.default_config().set(
-                    norm=norm_cfg.clone()),
+                    norm=norm_cfg.clone(),
+                    scale_factor=config_for_function(constant_scale_fn).set(value=1.0),
+                ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
             # Robustly extract rope_theta, checking rope_scaling dict if top-level is None
