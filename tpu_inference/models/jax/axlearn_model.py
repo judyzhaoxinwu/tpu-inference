@@ -384,8 +384,8 @@ class AxLearnForCausalLM(nnx.Module):
             # Enable biases for attention layers to match Qwen's architecture
             transformer_cfg = self.axlearn_model_config.decoder.transformer
             def enable_bias_on_layer(layer_cfg):
-                layer_cfg.self_attention.attention.input_linear.i_proj.qkv_proj.set(bias=True)
-                layer_cfg.self_attention.attention.o_proj.set(bias=True)
+                layer_cfg.self_attention.attention.input_linear.input_linear.layer.set(bias=True)
+                layer_cfg.self_attention.attention.output_linear.set(bias=True)
             from axlearn.common.attention import RepeatedTransformerLayer
             if issubclass(transformer_cfg.klass, RepeatedTransformerLayer):
                 enable_bias_on_layer(transformer_cfg.layer)
