@@ -879,12 +879,13 @@ class TPUModelRunner(KVConnectorModelRunnerMixin, LoRAModelRunnerMixin):
             padded_num_reqs,
         ) = self._prepare_inputs(scheduler_output)
 
-        logger.info(
+        print(
             f"=== [TPU RUNNER] PREPARE INPUTS ===\n"
             f"  input_ids: {input_ids.tolist() if hasattr(input_ids, 'tolist') else input_ids}\n"
             f"  input_positions: {input_positions.tolist() if hasattr(input_positions, 'tolist') else input_positions}\n"
             f"  total_num_scheduled_tokens: {scheduler_output.total_num_scheduled_tokens}\n"
-            f"====================================="
+            f"=====================================",
+            flush=True
         )
 
         # multi-modal support
@@ -1029,13 +1030,14 @@ class TPUModelRunner(KVConnectorModelRunnerMixin, LoRAModelRunnerMixin):
                     logits,
                     tpu_sampling_metadata,
                 )
-            logger.info(
+            print(
                 f"=== [TPU RUNNER] SAMPLED TOKENS ===\n"
                 f"  next_tokens: {next_tokens.tolist() if hasattr(next_tokens, 'tolist') else next_tokens}\n"
                 f"  logits shape: {logits.shape}\n"
                 f"  logits min/max: {float(jnp.min(logits))}/{float(jnp.max(logits))}\n"
                 f"  logits has NaN: {bool(jnp.isnan(logits).any())}\n"
-                f"====================================="
+                f"=====================================",
+                flush=True
             )
         else:
             # TODO(gxd3): wrap the spec decode sampling code block
