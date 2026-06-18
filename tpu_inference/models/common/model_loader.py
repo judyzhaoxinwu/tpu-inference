@@ -273,6 +273,15 @@ def _get_nnx_model(
             if isinstance(model, LoadableWithIterator):
                 assert isinstance(model, JaxModule)
                 loader.load_weights(model, vllm_config.model_config)
+                # Print loaded weight statistics to verify checkpoint sanity
+                w = model.decoder.emb.token_emb.weight
+                print(
+                    f"=== [MODEL LOADER] token_emb stats ===\n"
+                    f"  shape: {w.shape}\n"
+                    f"  min/max/mean: {float(jnp.min(w))}/{float(jnp.max(w))}/{float(jnp.mean(w))}\n"
+                    f"=====================================",
+                    flush=True
+                )
             elif isinstance(loader, RunaiModelStreamerLoader):
                 model_weights = vllm_config.model_config.model
                 if hasattr(vllm_config.model_config, "model_weights"):
