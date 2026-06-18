@@ -314,8 +314,16 @@ class AxLearnForCausalLM(nnx.Module):
                     norm=norm_cfg.clone()),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
-            rope_theta = getattr(model_config_hf, "rope_theta", 10000.0)
-            attention_qkv_linear.rope_pos_emb_layer.set(theta=rope_theta)
+            # Robustly extract rope_theta, checking rope_scaling dict if top-level is None
+            rope_theta = getattr(model_config_hf, "rope_theta", None)
+            if rope_theta is None:
+                rope_scaling = getattr(model_config_hf, "rope_scaling", None)
+                if isinstance(rope_scaling, dict):
+                    rope_theta = rope_scaling.get("rope_theta", None)
+            if rope_theta is None:
+                rope_theta = 10000.0
+
+            attention_qkv_linear.rope_pos_emb_layer.set(theta=float(rope_theta))
 
             # 3. Setup MoE parameters dynamically (if expert keys are present)
             num_experts = getattr(
