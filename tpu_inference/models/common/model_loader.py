@@ -294,14 +294,15 @@ def _get_nnx_model(
                 del vllm_config.pytorch_pooler
 
             # Print loaded weight statistics to verify checkpoint sanity
-            w = model.axlearn_state.value["decoder"]["emb"]["token_emb"]["weight"]
-            print(
-                f"=== [MODEL LOADER] token_emb stats ===\n"
-                f"  shape: {w.shape}\n"
-                f"  min/max/mean: {float(w.min())}/{float(w.max())}/{float(w.mean())}\n"
-                f"=====================================",
-                flush=True
-            )
+            print("=== [MODEL LOADER] FULL MODEL PARAMETERS HEALTH REPORT ===", flush=True)
+            def print_stats(path: str, val: Any):
+                if hasattr(val, "shape"):
+                    print(f"  {path} | shape: {val.shape} | min/max/mean: {float(val.min())}/{float(val.max())}/{float(val.mean())}", flush=True)
+                elif isinstance(val, dict):
+                    for k, v in val.items():
+                        print_stats(f"{path}/{k}", v)
+            print_stats("model", model.axlearn_state.value)
+            print("=========================================================", flush=True)
             jit_model = create_jit_model(
                 model,
                 use_qwix_on_abstract_model=should_apply_qwix_on_abstract_model)
