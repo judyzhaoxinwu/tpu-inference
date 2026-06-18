@@ -294,7 +294,7 @@ def _get_nnx_model(
                 del vllm_config.pytorch_pooler
 
             # Print loaded weight statistics to verify checkpoint sanity
-            w = model.model.decoder.emb.token_emb.weight
+            w = model.model.decoder.emb.token_emb.parameters["weight"]
             print(
                 f"=== [MODEL LOADER] token_emb stats ===\n"
                 f"  shape: {w.shape}\n"
