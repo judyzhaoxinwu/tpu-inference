@@ -321,15 +321,21 @@ class AxLearnForCausalLM(nnx.Module):
                 forward_dtype=jnp.float32,
             )
 
-            # 2. Setup Rotary Position Embeddings (RoPE) and Q/K Scaling
-            attention_qkv_linear = RoFormerQKVLinear.default_config().set(
-                input_linear=atten_input_linear,
-                rotary_value=False,
+            # Configure QK-Norm scales on the outer attention layer (MultiheadAttention)
+            # to match the converted checkpoint parameter tree perfectly.
+            atten_cfg.set(
                 query_scale=ScaleQuery.default_config().set(
                     norm=norm_cfg.clone(),
                     scale_factor=config_for_function(constant_scale_fn).set(value=1.0),
                 ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
+            )
+
+            # 2. Setup Rotary Position Embeddings (RoPE) and Q/K Linear
+            attention_qkv_linear = RoFormerQKVLinear.default_config().set(
+                input_linear=atten_input_linear,
+                rotary_value=False,
+                # Do NOT set query_scale or key_scale here, so they default to identity!
             )
             # Robustly extract rope_theta, checking rope_scaling dict if top-level is None
             rope_theta = getattr(model_config_hf, "rope_theta", None)
@@ -384,11 +390,17 @@ class AxLearnForCausalLM(nnx.Module):
                 )
 
             from axlearn.common import decoder
-            # Use moe_intermediate_size for MoE experts if present, otherwise fall back to intermediate_size
-            ffn_dim = getattr(
-                model_config_hf, "moe_intermediate_size",
-                getattr(model_config_hf, "intermediate_size", None)
-            )
+            # Resolve the expert FFN dimension based on the model type.
+            # In qwen3_moe, the expert size is 'intermediate_size' (e.g. 6144),
+            # while in qwen2_moe/qwen1.5_moe it is 'moe_intermediate_size'.
+            model_type = getattr(model_config_hf, "model_type", "")
+            if "qwen3_moe" in model_type:
+                ffn_dim = getattr(model_config_hf, "intermediate_size", None)
+            else:
+                ffn_dim = getattr(
+                    model_config_hf, "moe_intermediate_size",
+                    getattr(model_config_hf, "intermediate_size", None)
+                )
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
