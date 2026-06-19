@@ -288,10 +288,24 @@ class AxLearnForCausalLM(nnx.Module):
         configs_map = {}
         configs_map.update(c4_configs())
         configs_map.update(pajama_configs())
-        # Force model-agnostic mapping from HF config to prevent stale registry mismatches
-        # and ensure perfect alignment with converted checkpoint shapes and structures.
-        if False:
-            pass
+        use_registry = False
+        if model_name and model_name in configs_map:
+            # We bypass the AxLearn registry configs map for Qwen models
+            # to force model-agnostic mapping from the Hugging Face config.
+            # This is essential to prevent shape/parameter tree mismatches with converted HF checkpoints.
+            if "qwen" in model_name.lower():
+                logger.info(
+                    f"Bypassing AxLearn registry for Qwen model '{model_name}' to map model-agnostically from HF config."
+                )
+            else:
+                use_registry = True
+
+        if use_registry:
+            logger.info(
+                f"Instantiating model structure directly from AxLearn registry: {model_name}"
+            )
+            trainer_cfg = configs_map[model_name]()
+            self.axlearn_model_config = trainer_cfg.model.set(name=model_name)
         else:
             logger.info(
                 f"Named config '{model_name}' not found in AxLearn registry. Mapping properties model-agnostically from HF config."
