@@ -599,28 +599,31 @@ class AxLearnForCausalLM(nnx.Module):
                     ))
                 init_state = built_state.trainer_state["model"]
 
-                # Remap QK-Norm keys from outer attention to inner i_proj
-                # to match our mathematically correct inner execution order.
-                def remap_qknorm_keys(d):
-                    if not isinstance(d, dict):
+                # Remap QK-Norm keys from outer attention to inner i_proj.
+                # Since the checkpoint PyTree may contain immutable types (like flax.core.FrozenDict),
+                # we recursively rebuild the PyTree as standard mutable Python dicts while remapping.
+                def to_mutable_dict_and_remap(d):
+                    if not hasattr(d, "items"):
                         return d
-                    if "attention" in d and isinstance(d["attention"], dict):
-                        attn = d["attention"]
-                        scale_key = attn.pop("scale_key", None)
-                        scale_query = attn.pop("scale_query", None)
-                        if scale_key is not None or scale_query is not None:
-                            if "i_proj" not in attn:
-                                attn["i_proj"] = {}
-                            if scale_key is not None:
-                                attn["i_proj"]["scale_key"] = scale_key
-                            if scale_query is not None:
-                                attn["i_proj"]["scale_query"] = scale_query
+                    
+                    new_dict = {}
                     for k, v in d.items():
-                        if isinstance(v, dict):
-                            remap_qknorm_keys(v)
-                    return d
+                        new_dict[k] = to_mutable_dict_and_remap(v)
+                        
+                    scale_key = new_dict.pop("scale_key", None)
+                    scale_query = new_dict.pop("scale_query", None)
+                    
+                    if scale_key is not None or scale_query is not None:
+                        if "i_proj" not in new_dict:
+                            new_dict["i_proj"] = {}
+                        if scale_key is not None:
+                            new_dict["i_proj"]["scale_key"] = scale_key
+                        if scale_query is not None:
+                            new_dict["i_proj"]["scale_query"] = scale_query
+                            
+                    return new_dict
 
-                init_state = remap_qknorm_keys(init_state)
+                init_state = to_mutable_dict_and_remap(init_state)
         else:
             logger.warning(
                 "No checkpoint path provided. Initializing parameters with random noise."
