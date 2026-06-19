@@ -338,10 +338,7 @@ class AxLearnForCausalLM(nnx.Module):
             # Configure QK-Norm scales on the outer attention layer (MultiheadAttention)
             # to match the converted checkpoint parameter tree perfectly.
             atten_cfg.set(
-                query_scale=ScaleQuery.default_config().set(
-                    norm=norm_cfg.clone(),
-                    scale_factor=config_for_function(constant_scale_fn).set(value=1.0),
-                ),
+                query_scale=ScaleQuery.default_config().set(norm=norm_cfg.clone()),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
 
