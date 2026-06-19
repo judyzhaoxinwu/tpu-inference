@@ -225,10 +225,10 @@ class AxLearnForCausalLM(nnx.Module):
                         _vllm_context.layer_index]
                     md = _vllm_context.attention_metadata
 
-                    from axlearn.common.utils import thread_resources
+                    import jax
                     from tpu_inference.layers.common.attention_interface import \
                         attention
-                    mesh = thread_resources.env.physical_mesh
+                    mesh = jax.sharding.get_abstract_mesh()
                     new_kv_cache, outputs = attention(
                         kv_cache_array,
                         q_proj,
