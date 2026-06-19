@@ -335,18 +335,14 @@ class AxLearnForCausalLM(nnx.Module):
                 forward_dtype=jnp.float32,
             )
 
-            # Configure QK-Norm scales on the outer attention layer (MultiheadAttention)
-            # to match the converted checkpoint parameter tree perfectly.
-            atten_cfg.set(
-                query_scale=ScaleQuery.default_config().set(norm=norm_cfg.clone()),
-                key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
-            )
-
             # 2. Setup Rotary Position Embeddings (RoPE) and Q/K Linear
+            # Configure QK-Norm scales on the inner projection layer (RoFormerQKVLinear)
+            # so they execute BEFORE RoPE, matching the mathematically correct order of operations.
             attention_qkv_linear = RoFormerQKVLinear.default_config().set(
                 input_linear=atten_input_linear,
                 rotary_value=False,
-                # Do NOT set query_scale or key_scale here, so they default to identity!
+                query_scale=ScaleQuery.default_config().set(norm=norm_cfg.clone()),
+                key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
@@ -602,6 +598,29 @@ class AxLearnForCausalLM(nnx.Module):
                         built_keys=set(),
                     ))
                 init_state = built_state.trainer_state["model"]
+
+                # Remap QK-Norm keys from outer attention to inner i_proj
+                # to match our mathematically correct inner execution order.
+                def remap_qknorm_keys(d):
+                    if not isinstance(d, dict):
+                        return d
+                    if "attention" in d and isinstance(d["attention"], dict):
+                        attn = d["attention"]
+                        scale_key = attn.pop("scale_key", None)
+                        scale_query = attn.pop("scale_query", None)
+                        if scale_key is not None or scale_query is not None:
+                            if "i_proj" not in attn:
+                                attn["i_proj"] = {}
+                            if scale_key is not None:
+                                attn["i_proj"]["scale_key"] = scale_key
+                            if scale_query is not None:
+                                attn["i_proj"]["scale_query"] = scale_query
+                    for k, v in d.items():
+                        if isinstance(v, dict):
+                            remap_qknorm_keys(v)
+                    return d
+
+                init_state = remap_qknorm_keys(init_state)
         else:
             logger.warning(
                 "No checkpoint path provided. Initializing parameters with random noise."
