@@ -274,6 +274,7 @@ class AxLearnForCausalLM(nnx.Module):
         elif hasattr(model_config_hf, "text_config"):
             model_config_hf = model_config_hf.text_config
 
+        logger.info(f"=== [HF CONFIG DEBUG] ===\n{model_config_hf}\n=========================")
         self.hidden_dim = getattr(model_config_hf, "hidden_size",
                                   getattr(model_config_hf, "hidden_dim", None))
         axlearn_cfg = getattr(vllm_config, "additional_config",
