@@ -404,17 +404,14 @@ class AxLearnForCausalLM(nnx.Module):
                 )
 
             from axlearn.common import decoder
-            # Resolve the expert FFN dimension based on the model type.
-            # In qwen3_moe, the expert size is 'intermediate_size' (e.g. 6144),
-            # while in qwen2_moe/qwen1.5_moe it is 'moe_intermediate_size'.
+            # Resolve the expert FFN dimension.
+            # We use moe_intermediate_size (if present) for MoE models (e.g., 768),
+            # and intermediate_size (e.g., 6144) for dense models.
             model_type = getattr(model_config_hf, "model_type", "")
-            if "qwen3_moe" in model_type:
-                ffn_dim = getattr(model_config_hf, "intermediate_size", None)
-            else:
-                ffn_dim = getattr(
-                    model_config_hf, "moe_intermediate_size",
-                    getattr(model_config_hf, "intermediate_size", None)
-                )
+            ffn_dim = getattr(
+                model_config_hf, "moe_intermediate_size",
+                getattr(model_config_hf, "intermediate_size", None)
+            )
             logger.info(f"=== [FFN DIM DEBUG] === ffn_dim: {ffn_dim} | model_type: {model_type}")
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
