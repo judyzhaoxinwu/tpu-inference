@@ -250,13 +250,7 @@ class AxLearnForCausalLM(nnx.Module):
                     )
                     outputs = jnp.expand_dims(outputs_3d, axis=1).astype(q_proj.dtype)
 
-                    if _vllm_context.layer_index == 0:
-                        print(f"=== [ATTENTION DEBUG] LAYER 0 ===", flush=True)
-                        print(f"  q_proj_3d | shape: {q_proj_3d.shape} | min/max/mean: {float(q_proj_3d.min())}/{float(q_proj_3d.max())}/{float(q_proj_3d.mean())}", flush=True)
-                        print(f"  k_proj_3d | shape: {k_proj_3d.shape} | min/max/mean: {float(k_proj_3d.min())}/{float(k_proj_3d.max())}/{float(k_proj_3d.mean())}", flush=True)
-                        print(f"  v_proj_3d | shape: {v_proj_3d.shape} | min/max/mean: {float(v_proj_3d.min())}/{float(v_proj_3d.max())}/{float(v_proj_3d.mean())}", flush=True)
-                        print(f"  outputs_3d | shape: {outputs_3d.shape} | min/max/mean: {float(outputs_3d.min())}/{float(outputs_3d.max())}/{float(outputs_3d.mean())}", flush=True)
-                        print(f"=================================", flush=True)
+
 
                     _vllm_context.kv_caches[
                         _vllm_context.layer_index] = new_kv_cache
