@@ -229,22 +229,26 @@ class AxLearnForCausalLM(nnx.Module):
                     from tpu_inference.layers.common.attention_interface import \
                         attention
                     mesh = jax.sharding.get_abstract_mesh()
-                    new_kv_cache, outputs = attention(
+                    q_proj_3d = jnp.squeeze(q_proj, axis=1)
+                    k_proj_3d = jnp.squeeze(k_proj, axis=1)
+                    v_proj_3d = jnp.squeeze(v_proj, axis=1)
+                    new_kv_cache, outputs_3d = attention(
                         kv_cache_array,
-                        q_proj,
-                        k_proj,
-                        v_proj,
+                        q_proj_3d,
+                        k_proj_3d,
+                        v_proj_3d,
                         md,
                         mesh,
                         self.per_head_dim(),
                     )
+                    outputs = jnp.expand_dims(outputs_3d, axis=1)
 
                     if _vllm_context.layer_index == 0:
                         print(f"=== [ATTENTION DEBUG] LAYER 0 ===", flush=True)
-                        print(f"  q_proj | shape: {q_proj.shape} | min/max/mean: {float(q_proj.min())}/{float(q_proj.max())}/{float(q_proj.mean())}", flush=True)
-                        print(f"  k_proj | shape: {k_proj.shape} | min/max/mean: {float(k_proj.min())}/{float(k_proj.max())}/{float(k_proj.mean())}", flush=True)
-                        print(f"  v_proj | shape: {v_proj.shape} | min/max/mean: {float(v_proj.min())}/{float(v_proj.max())}/{float(v_proj.mean())}", flush=True)
-                        print(f"  outputs | shape: {outputs.shape} | min/max/mean: {float(outputs.min())}/{float(outputs.max())}/{float(outputs.mean())}", flush=True)
+                        print(f"  q_proj_3d | shape: {q_proj_3d.shape} | min/max/mean: {float(q_proj_3d.min())}/{float(q_proj_3d.max())}/{float(q_proj_3d.mean())}", flush=True)
+                        print(f"  k_proj_3d | shape: {k_proj_3d.shape} | min/max/mean: {float(k_proj_3d.min())}/{float(k_proj_3d.max())}/{float(k_proj_3d.mean())}", flush=True)
+                        print(f"  v_proj_3d | shape: {v_proj_3d.shape} | min/max/mean: {float(v_proj_3d.min())}/{float(v_proj_3d.max())}/{float(v_proj_3d.mean())}", flush=True)
+                        print(f"  outputs_3d | shape: {outputs_3d.shape} | min/max/mean: {float(outputs_3d.min())}/{float(outputs_3d.max())}/{float(outputs_3d.mean())}", flush=True)
                         print(f"=================================", flush=True)
 
                     _vllm_context.kv_caches[
