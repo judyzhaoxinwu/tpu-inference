@@ -415,6 +415,7 @@ class AxLearnForCausalLM(nnx.Module):
                     model_config_hf, "moe_intermediate_size",
                     getattr(model_config_hf, "intermediate_size", None)
                 )
+            logger.info(f"=== [FFN DIM DEBUG] === ffn_dim: {ffn_dim} | model_type: {model_type}")
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
