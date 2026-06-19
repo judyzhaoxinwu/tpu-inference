@@ -200,7 +200,7 @@ class AxLearnForCausalLM(nnx.Module):
 
             class VllmAttentionMixin:
 
-                def _forward(
+                def _forward_for_mode(
                     self,
                     *,
                     mode: ForwardMode,
