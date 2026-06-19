@@ -232,6 +232,13 @@ class AxLearnForCausalLM(nnx.Module):
                     q_proj_3d = jnp.squeeze(q_proj, axis=1)
                     k_proj_3d = jnp.squeeze(k_proj, axis=1)
                     v_proj_3d = jnp.squeeze(v_proj, axis=1)
+
+                    # Cast inputs to match kv_cache dtype (bfloat16) to prevent kernel mismatch
+                    cache_dtype = kv_cache_array.dtype
+                    q_proj_3d = q_proj_3d.astype(cache_dtype)
+                    k_proj_3d = k_proj_3d.astype(cache_dtype)
+                    v_proj_3d = v_proj_3d.astype(cache_dtype)
+
                     new_kv_cache, outputs_3d = attention(
                         kv_cache_array,
                         q_proj_3d,
@@ -241,7 +248,7 @@ class AxLearnForCausalLM(nnx.Module):
                         mesh,
                         self.per_head_dim(),
                     )
-                    outputs = jnp.expand_dims(outputs_3d, axis=1)
+                    outputs = jnp.expand_dims(outputs_3d, axis=1).astype(q_proj.dtype)
 
                     if _vllm_context.layer_index == 0:
                         print(f"=== [ATTENTION DEBUG] LAYER 0 ===", flush=True)
