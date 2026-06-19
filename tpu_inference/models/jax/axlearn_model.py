@@ -351,12 +351,16 @@ class AxLearnForCausalLM(nnx.Module):
                 rotary_value=False,
                 # Do NOT set query_scale or key_scale here, so they default to identity!
             )
-            # Robustly extract rope_theta, checking rope_scaling dict if top-level is None
+            # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
             if rope_theta is None:
                 rope_scaling = getattr(model_config_hf, "rope_scaling", None)
                 if isinstance(rope_scaling, dict):
                     rope_theta = rope_scaling.get("rope_theta", None)
+            if rope_theta is None:
+                rope_params = getattr(model_config_hf, "rope_parameters", None)
+                if isinstance(rope_params, dict):
+                    rope_theta = rope_params.get("rope_theta", None)
             if rope_theta is None:
                 rope_theta = 10000.0
 
