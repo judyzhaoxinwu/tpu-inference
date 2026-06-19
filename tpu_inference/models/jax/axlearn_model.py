@@ -287,12 +287,10 @@ class AxLearnForCausalLM(nnx.Module):
         configs_map = {}
         configs_map.update(c4_configs())
         configs_map.update(pajama_configs())
-        if model_name and model_name in configs_map:
-            logger.info(
-                f"Instantiating model structure directly from AxLearn registry: {model_name}"
-            )
-            trainer_cfg = configs_map[model_name]()
-            self.axlearn_model_config = trainer_cfg.model.set(name=model_name)
+        # Force model-agnostic mapping from HF config to prevent stale registry mismatches
+        # and ensure perfect alignment with converted checkpoint shapes and structures.
+        if False:
+            pass
         else:
             logger.info(
                 f"Named config '{model_name}' not found in AxLearn registry. Mapping properties model-agnostically from HF config."
@@ -385,13 +383,18 @@ class AxLearnForCausalLM(nnx.Module):
                 )
 
             from axlearn.common import decoder
+            # Use moe_intermediate_size for MoE experts if present, otherwise fall back to intermediate_size
+            ffn_dim = getattr(
+                model_config_hf, "moe_intermediate_size",
+                getattr(model_config_hf, "intermediate_size", None)
+            )
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
                 num_heads=model_config_hf.num_attention_heads,
                 vocab_size=self.vocab_size,
                 activation_fn=("nn.silu", "linear"),  # SwiGLU
-                ffn_dim=model_config_hf.intermediate_size,
+                ffn_dim=ffn_dim,
                 normalization=RMSNorm.default_config().set(
                     eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
                     forward_dtype=jnp.float32,
