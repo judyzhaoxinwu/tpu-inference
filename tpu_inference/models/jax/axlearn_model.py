@@ -478,6 +478,9 @@ class AxLearnForCausalLM(nnx.Module):
         except AttributeError:
             pass
 
+        logger.info(
+            f"=== [MODEL CONFIG FFN DIM] === hidden_dim: {self.axlearn_model_config.decoder.transformer.layer.feed_forward.hidden_dim}"
+        )
         with self.mesh:
             self.model = self.axlearn_model_config.instantiate(parent=None)
 
