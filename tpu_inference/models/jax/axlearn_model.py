@@ -191,6 +191,36 @@ class AxLearnForCausalLM(nnx.Module):
                 GroupedQueryAttention, MultiheadAttention, RoFormerQKVLinear)
             from axlearn.common.layers import RMSNorm
             from axlearn.common.utils import Tensor
+            
+            # Monkey-patch AxLearn's native interleaved RoPE with HuggingFace-compatible split-half RoPE.
+            # This is required if the converted checkpoint did not have its Q/K weight matrices permuted.
+            import axlearn.common.attention as axlearn_attention
+            def split_half_apply_rotary_position_embeddings(
+                *,
+                query: jax.Array,
+                key: jax.Array,
+                value: jax.Array,
+                sinusoidal_pos: jax.Array,
+                rotary_key: bool,
+                rotary_value: bool,
+            ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+                sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
+                cos_pos = jnp.concatenate([cos, cos], axis=-1)
+                sin_pos = jnp.concatenate([sin, sin], axis=-1)
+                
+                def rotate_half(x):
+                    half_dim = x.shape[-1] // 2
+                    return jnp.concatenate([-x[..., half_dim:], x[..., :half_dim]], axis=-1)
+                    
+                query = query * cos_pos + rotate_half(query) * sin_pos
+                if rotary_key:
+                    key = key * cos_pos + rotate_half(key) * sin_pos
+                if rotary_value:
+                    value = value * cos_pos + rotate_half(value) * sin_pos
+                return query, key, value
+                
+            axlearn_attention.apply_rotary_position_embeddings = split_half_apply_rotary_position_embeddings
+            logger.info("=== [MONKEY PATCH] === Successfully replaced AxLearn RoPE with HuggingFace split-half RoPE!")
             from axlearn.experiments.text.gpt.c4_trainer import \
                 named_trainer_configs as c4_configs
             from axlearn.experiments.text.gpt.common import \
