@@ -583,6 +583,30 @@ class AxLearnForCausalLM(nnx.Module):
                 target_specs = dict(
                     model=self.model.create_parameter_specs_recursively())
 
+                # Remap target specs from inner to outer so the checkpointer
+                # looks up the correct outer paths in the checkpoint directory.
+                def remap_inner_to_outer(d):
+                    if hasattr(d, "items"):
+                        new_dict = {}
+                        for k, v in d.items():
+                            new_dict[k] = remap_inner_to_outer(v)
+                        if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
+                            i_proj = new_dict["i_proj"]
+                            scale_key = i_proj.pop("scale_key", None)
+                            scale_query = i_proj.pop("scale_query", None)
+                            if scale_key is not None:
+                                new_dict["scale_key"] = scale_key
+                            if scale_query is not None:
+                                new_dict["scale_query"] = scale_query
+                        return new_dict
+                    if isinstance(d, list):
+                        return [remap_inner_to_outer(x) for x in d]
+                    if isinstance(d, tuple):
+                        return tuple(remap_inner_to_outer(x) for x in d)
+                    return d
+
+                target_specs = remap_inner_to_outer(target_specs)
+
                 storage_builder = TensorStoreStateStorageBuilder.default_config(
                 ).set(
                     name="storage",
@@ -599,9 +623,8 @@ class AxLearnForCausalLM(nnx.Module):
                     ))
                 init_state = built_state.trainer_state["model"]
 
-                # Remap QK-Norm keys from outer attention to inner i_proj.
-                # Since the checkpoint PyTree may contain lists, tuples, and immutable types
-                # (like flax.core.FrozenDict), we recursively rebuild the PyTree robustly.
+                # Remap loaded parameters from outer to inner to match our
+                # mathematically correct model execution structure.
                 def to_mutable_dict_and_remap(d):
                     if hasattr(d, "items"):
                         new_dict = {}
