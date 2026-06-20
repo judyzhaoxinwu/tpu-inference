@@ -600,28 +600,36 @@ class AxLearnForCausalLM(nnx.Module):
                 init_state = built_state.trainer_state["model"]
 
                 # Remap QK-Norm keys from outer attention to inner i_proj.
-                # Since the checkpoint PyTree may contain immutable types (like flax.core.FrozenDict),
-                # we recursively rebuild the PyTree as standard mutable Python dicts while remapping.
+                # Since the checkpoint PyTree may contain lists, tuples, and immutable types
+                # (like flax.core.FrozenDict), we recursively rebuild the PyTree robustly.
                 def to_mutable_dict_and_remap(d):
-                    if not hasattr(d, "items"):
-                        return d
-                    
-                    new_dict = {}
-                    for k, v in d.items():
-                        new_dict[k] = to_mutable_dict_and_remap(v)
-                        
-                    scale_key = new_dict.pop("scale_key", None)
-                    scale_query = new_dict.pop("scale_query", None)
-                    
-                    if scale_key is not None or scale_query is not None:
-                        if "i_proj" not in new_dict:
-                            new_dict["i_proj"] = {}
-                        if scale_key is not None:
-                            new_dict["i_proj"]["scale_key"] = scale_key
-                        if scale_query is not None:
-                            new_dict["i_proj"]["scale_query"] = scale_query
+                    if hasattr(d, "items"):
+                        new_dict = {}
+                        for k, v in d.items():
+                            new_dict[k] = to_mutable_dict_and_remap(v)
                             
-                    return new_dict
+                        scale_key = new_dict.pop("scale_key", None)
+                        scale_query = new_dict.pop("scale_query", None)
+                        
+                        if scale_key is not None or scale_query is not None:
+                            logger.info(
+                                f"=== [REMAP SUCCESS] === Found and remapped QK-Norm scales under key: {list(new_dict.keys())}"
+                            )
+                            if "i_proj" not in new_dict:
+                                new_dict["i_proj"] = {}
+                            if scale_key is not None:
+                                new_dict["i_proj"]["scale_key"] = scale_key
+                            if scale_query is not None:
+                                new_dict["i_proj"]["scale_query"] = scale_query
+                                
+                        return new_dict
+                    
+                    if isinstance(d, list):
+                        return [to_mutable_dict_and_remap(x) for x in d]
+                    if isinstance(d, tuple):
+                        return tuple(to_mutable_dict_and_remap(x) for x in d)
+                        
+                    return d
 
                 init_state = to_mutable_dict_and_remap(init_state)
         else:
