@@ -371,7 +371,10 @@ class AxLearnForCausalLM(nnx.Module):
             attention_qkv_linear = RoFormerQKVLinear.default_config().set(
                 input_linear=atten_input_linear,
                 rotary_value=False,
-                query_scale=ScaleQuery.default_config().set(norm=norm_cfg.clone()),
+                query_scale=ScaleQuery.default_config().set(
+                    norm=norm_cfg.clone(),
+                    scale_factor=config_for_function(constant_scale_fn).set(value=1.0)
+                ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
