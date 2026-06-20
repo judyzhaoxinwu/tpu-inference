@@ -587,6 +587,11 @@ class AxLearnForCausalLM(nnx.Module):
                 # looks up the correct outer paths in the checkpoint directory.
                 def remap_inner_to_outer(d):
                     if hasattr(d, "items"):
+                        # [SPEC KEYS DEBUG]
+                        matching_keys = [k for k in d.keys() if "scale" in k or "proj" in k]
+                        if matching_keys:
+                            logger.info(f"=== [SPEC KEYS DEBUG] === Keys: {matching_keys} | All: {list(d.keys())}")
+                            
                         new_dict = {}
                         for k, v in d.items():
                             new_dict[k] = remap_inner_to_outer(v)
@@ -627,6 +632,11 @@ class AxLearnForCausalLM(nnx.Module):
                 # mathematically correct model execution structure.
                 def to_mutable_dict_and_remap(d):
                     if hasattr(d, "items"):
+                        # [LOADED KEYS DEBUG]
+                        matching_keys = [k for k in d.keys() if "scale" in k or "proj" in k]
+                        if matching_keys:
+                            logger.info(f"=== [LOADED KEYS DEBUG] === Keys: {matching_keys} | All: {list(d.keys())}")
+                            
                         new_dict = {}
                         for k, v in d.items():
                             new_dict[k] = to_mutable_dict_and_remap(v)
