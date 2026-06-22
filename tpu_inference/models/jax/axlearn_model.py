@@ -38,6 +38,11 @@ _vllm_context.kv_caches = None
 _vllm_context.attention_metadata = None
 _vllm_context.layer_index = 0
 
+# Global flag to dynamically enable/disable the HuggingFace split-half RoPE monkey-patch
+# based on whether the loaded model's GCS checkpoint has its weights pre-permuted or not.
+_USE_SPLIT_HALF_ROPE = False
+_orig_apply_rotary_position_embeddings = None
+
 
 def register():
     logger.info(
@@ -195,6 +200,10 @@ class AxLearnForCausalLM(nnx.Module):
             # Monkey-patch AxLearn's native interleaved RoPE with HuggingFace-compatible split-half RoPE.
             # This is required if the converted checkpoint did not have its Q/K weight matrices permuted.
             import axlearn.common.attention as axlearn_attention
+            global _orig_apply_rotary_position_embeddings
+            if _orig_apply_rotary_position_embeddings is None:
+                _orig_apply_rotary_position_embeddings = axlearn_attention.apply_rotary_position_embeddings
+            
             def split_half_apply_rotary_position_embeddings(
                 *,
                 query: jax.Array,
@@ -204,6 +213,18 @@ class AxLearnForCausalLM(nnx.Module):
                 rotary_key: bool,
                 rotary_value: bool,
             ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+                global _USE_SPLIT_HALF_ROPE
+                if not _USE_SPLIT_HALF_ROPE:
+                    # Fall back directly to AxLearn's native interleaved RoPE!
+                    return _orig_apply_rotary_position_embeddings(
+                        query=query,
+                        key=key,
+                        value=value,
+                        sinusoidal_pos=sinusoidal_pos,
+                        rotary_key=rotary_key,
+                        rotary_value=rotary_value,
+                    )
+                
                 sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
                 cos_pos = jnp.concatenate([cos, cos], axis=-1)
                 sin_pos = jnp.concatenate([sin, sin], axis=-1)
@@ -220,7 +241,7 @@ class AxLearnForCausalLM(nnx.Module):
                 return query, key, value
                 
             axlearn_attention.apply_rotary_position_embeddings = split_half_apply_rotary_position_embeddings
-            logger.info("=== [MONKEY PATCH] === Successfully replaced AxLearn RoPE with HuggingFace split-half RoPE!")
+            logger.info("=== [MONKEY PATCH] === Successfully registered dynamic HuggingFace/AxLearn RoPE router!")
             from axlearn.experiments.text.gpt.c4_trainer import \
                 named_trainer_configs as c4_configs
             from axlearn.experiments.text.gpt.common import \
@@ -305,6 +326,16 @@ class AxLearnForCausalLM(nnx.Module):
             model_config_hf = model_config_hf.text_config
 
         logger.info(f"=== [HF CONFIG DEBUG] ===\n{model_config_hf}\n=========================")
+        
+        global _USE_SPLIT_HALF_ROPE
+        num_heads = getattr(model_config_hf, "num_attention_heads", 16)
+        if num_heads == 32:
+            _USE_SPLIT_HALF_ROPE = True
+            logger.info("=== [ROPE SWITCH] === Detected 30B MoE model (32 heads). Enabling HuggingFace split-half RoPE monkey-patch for un-permuted checkpoint.")
+        else:
+            _USE_SPLIT_HALF_ROPE = False
+            logger.info("=== [ROPE SWITCH] === Detected 0.6B Dense model (16 heads). Keeping native AxLearn interleaved RoPE for permuted checkpoint.")
+
         self.hidden_dim = getattr(model_config_hf, "hidden_size",
                                   getattr(model_config_hf, "hidden_dim", None))
         axlearn_cfg = getattr(vllm_config, "additional_config",
