@@ -328,13 +328,11 @@ class AxLearnForCausalLM(nnx.Module):
         logger.info(f"=== [HF CONFIG DEBUG] ===\n{model_config_hf}\n=========================")
         
         global _USE_SPLIT_HALF_ROPE
-        num_heads = getattr(model_config_hf, "num_attention_heads", 16)
-        if num_heads == 32:
-            _USE_SPLIT_HALF_ROPE = True
-            logger.info("=== [ROPE SWITCH] === Detected 30B MoE model (32 heads). Enabling HuggingFace split-half RoPE monkey-patch for un-permuted checkpoint.")
-        else:
-            _USE_SPLIT_HALF_ROPE = False
-            logger.info("=== [ROPE SWITCH] === Detected 0.6B Dense model (16 heads). Keeping native AxLearn interleaved RoPE for permuted checkpoint.")
+        # Since both the 0.6B and 30B checkpoints on GCS are now successfully converted
+        # using the updated offline converter script (which permutes Q/K weights to interleaved format),
+        # we set _USE_SPLIT_HALF_ROPE = False for all models. JAX will run native interleaved RoPE.
+        _USE_SPLIT_HALF_ROPE = False
+        logger.info("=== [ROPE SWITCH] === All active GCS checkpoints are offline-permuted. Running 100% native AxLearn interleaved RoPE.")
 
         self.hidden_dim = getattr(model_config_hf, "hidden_size",
                                   getattr(model_config_hf, "hidden_dim", None))
