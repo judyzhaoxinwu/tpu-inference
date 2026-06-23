@@ -659,12 +659,12 @@ class AxLearnForCausalLM(nnx.Module):
                             new_dict[k] = remap_inner_to_outer(v)
                         if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
                             i_proj = new_dict["i_proj"]
-                            key_scale = i_proj.pop("key_scale", None)
-                            query_scale = i_proj.pop("query_scale", None)
-                            if key_scale is not None:
-                                new_dict["scale_key"] = key_scale
-                            if query_scale is not None:
-                                new_dict["scale_query"] = query_scale
+                            scale_key = i_proj.pop("scale_key", None)
+                            scale_query = i_proj.pop("scale_query", None)
+                            if scale_key is not None:
+                                new_dict["scale_key"] = scale_key
+                            if scale_query is not None:
+                                new_dict["scale_query"] = scale_query
                         return new_dict
                     if isinstance(d, list):
                         return [remap_inner_to_outer(x) for x in d]
@@ -708,14 +708,14 @@ class AxLearnForCausalLM(nnx.Module):
                         
                         if scale_key is not None or scale_query is not None:
                             logger.info(
-                                f"=== [REMAP SUCCESS] === Found and remapped QK-Norm scales to inner keys under: {list(new_dict.keys())}"
+                                f"=== [REMAP SUCCESS] === Found and remapped QK-Norm scales under key: {list(new_dict.keys())}"
                             )
                             if "i_proj" not in new_dict:
                                 new_dict["i_proj"] = {}
                             if scale_key is not None:
-                                new_dict["i_proj"]["key_scale"] = scale_key
+                                new_dict["i_proj"]["scale_key"] = scale_key
                             if scale_query is not None:
-                                new_dict["i_proj"]["query_scale"] = scale_query
+                                new_dict["i_proj"]["scale_query"] = scale_query
                                 
                         return new_dict
                     
