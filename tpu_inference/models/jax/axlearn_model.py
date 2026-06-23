@@ -401,7 +401,8 @@ class AxLearnForCausalLM(nnx.Module):
                 input_linear=atten_input_linear,
                 rotary_value=False,
                 query_scale=ScaleQuery.default_config().set(
-                    norm=norm_cfg.clone()
+                    norm=norm_cfg.clone(),
+                    scale_factor=config_for_function(constant_scale_fn).set(value=1.0)
                 ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
