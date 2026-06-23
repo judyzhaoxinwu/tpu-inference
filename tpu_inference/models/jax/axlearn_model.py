@@ -170,7 +170,7 @@ class AxLearnForCausalLM(nnx.Module):
     def __init__(self, vllm_config: VllmConfig, rng_key: jax.Array,
                  mesh: Mesh) -> None:
         self.vllm_config = vllm_config
-        self._needs_qk_norm_remap = False
+        self._qk_norm_remap_mode = None
 
         # Re-map vLLM's physical mesh axis names to AxLearn's logical axis names
         vllm_axis_to_axlearn = {
@@ -366,6 +366,9 @@ class AxLearnForCausalLM(nnx.Module):
             )
             trainer_cfg = configs_map[model_name]()
             self.axlearn_model_config = trainer_cfg.model.set(name=model_name)
+            if model_name and "qwen" in model_name.lower():
+                # Registry Qwen models (like 0.6B) expect outer scales, but GCS checkpoint is inner
+                self._qk_norm_remap_mode = "inner_to_outer"
         else:
             logger.info(
                 f"Named config '{model_name}' not found in AxLearn registry. Mapping properties model-agnostically from HF config."
@@ -407,7 +410,8 @@ class AxLearnForCausalLM(nnx.Module):
                 ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
-            self._needs_qk_norm_remap = True
+            # Bypassed Qwen models (like 30B) expect inner scales, but GCS checkpoint is outer
+            self._qk_norm_remap_mode = "outer_to_inner"
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
             if rope_theta is None:
@@ -649,33 +653,50 @@ class AxLearnForCausalLM(nnx.Module):
 
                 # Remap target specs from inner to outer so the checkpointer
                 # looks up the correct outer paths in the checkpoint directory.
-                def remap_inner_to_outer(d):
-                    if hasattr(d, "items"):
-                        # [SPEC KEYS DEBUG]
-                        matching_keys = [k for k in d.keys() if "scale" in k or "proj" in k]
-                        if matching_keys:
-                            logger.info(f"=== [SPEC KEYS DEBUG] === Keys: {matching_keys} | All: {list(d.keys())}")
-                            
-                        new_dict = {}
-                        for k, v in d.items():
-                            new_dict[k] = remap_inner_to_outer(v)
-                        if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
-                            i_proj = new_dict["i_proj"]
-                            scale_key = i_proj.pop("scale_key", None)
-                            scale_query = i_proj.pop("scale_query", None)
-                            if scale_key is not None:
-                                new_dict["scale_key"] = scale_key
-                            if scale_query is not None:
-                                new_dict["scale_query"] = scale_query
-                        return new_dict
-                    if isinstance(d, list):
-                        return [remap_inner_to_outer(x) for x in d]
-                    if isinstance(d, tuple):
-                        return tuple(remap_inner_to_outer(x) for x in d)
-                    return d
-
-                if self._needs_qk_norm_remap:
+                # Align the JAX model specs to match the GCS checkpoint layout
+                if self._qk_norm_remap_mode == "outer_to_inner":
+                    def remap_inner_to_outer(d):
+                        if hasattr(d, "items"):
+                            new_dict = {}
+                            for k, v in d.items():
+                                new_dict[k] = remap_inner_to_outer(v)
+                            if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
+                                i_proj = new_dict["i_proj"]
+                                scale_key = i_proj.pop("scale_key", None)
+                                scale_query = i_proj.pop("scale_query", None)
+                                if scale_key is not None:
+                                    new_dict["scale_key"] = scale_key
+                                if scale_query is not None:
+                                    new_dict["scale_query"] = scale_query
+                            return new_dict
+                        if isinstance(d, list):
+                            return [remap_inner_to_outer(x) for x in d]
+                        if isinstance(d, tuple):
+                            return tuple(remap_inner_to_outer(x) for x in d)
+                        return d
                     target_specs = remap_inner_to_outer(target_specs)
+                elif self._qk_norm_remap_mode == "inner_to_outer":
+                    def remap_outer_to_inner(d):
+                        if hasattr(d, "items"):
+                            new_dict = {}
+                            for k, v in d.items():
+                                new_dict[k] = remap_outer_to_inner(v)
+                            scale_key = new_dict.pop("scale_key", None)
+                            scale_query = new_dict.pop("scale_query", None)
+                            if scale_key is not None or scale_query is not None:
+                                if "i_proj" not in new_dict:
+                                    new_dict["i_proj"] = {}
+                                if scale_key is not None:
+                                    new_dict["i_proj"]["scale_key"] = scale_key
+                                if scale_query is not None:
+                                    new_dict["i_proj"]["scale_query"] = scale_query
+                            return new_dict
+                        if isinstance(d, list):
+                            return [remap_outer_to_inner(x) for x in d]
+                        if isinstance(d, tuple):
+                            return tuple(remap_outer_to_inner(x) for x in d)
+                        return d
+                    target_specs = remap_outer_to_inner(target_specs)
 
                 storage_builder = TensorStoreStateStorageBuilder.default_config(
                 ).set(
@@ -693,43 +714,56 @@ class AxLearnForCausalLM(nnx.Module):
                     ))
                 init_state = built_state.trainer_state["model"]
 
-                # Remap loaded parameters from outer to inner to match our
-                # mathematically correct model execution structure.
-                def to_mutable_dict_and_remap(d):
-                    if hasattr(d, "items"):
-                        # [LOADED KEYS DEBUG]
-                        matching_keys = [k for k in d.keys() if "scale" in k or "proj" in k]
-                        if matching_keys:
-                            logger.info(f"=== [LOADED KEYS DEBUG] === Keys: {matching_keys} | All: {list(d.keys())}")
-                            
-                        new_dict = {}
-                        for k, v in d.items():
-                            new_dict[k] = to_mutable_dict_and_remap(v)
-                            
-                        scale_key = new_dict.pop("scale_key", None)
-                        scale_query = new_dict.pop("scale_query", None)
-                        
-                        if scale_key is not None or scale_query is not None:
-                            logger.info(
-                                f"=== [REMAP SUCCESS] === Found and remapped QK-Norm scales under key: {list(new_dict.keys())}"
-                            )
-                            if "i_proj" not in new_dict:
-                                new_dict["i_proj"] = {}
-                            if scale_key is not None:
-                                new_dict["i_proj"]["scale_key"] = scale_key
-                            if scale_query is not None:
-                                new_dict["i_proj"]["scale_query"] = scale_query
-                                
-                        return new_dict
-                    
-                    if isinstance(d, list):
-                        return [to_mutable_dict_and_remap(x) for x in d]
-                    if isinstance(d, tuple):
-                        return tuple(to_mutable_dict_and_remap(x) for x in d)
-                        
-                    return d
-
-                if self._needs_qk_norm_remap:
+                # Remap loaded parameters to match the active serving model layout
+                if self._qk_norm_remap_mode == "outer_to_inner":
+                    def to_mutable_dict_and_remap(d):
+                        if hasattr(d, "items"):
+                            new_dict = {}
+                            for k, v in d.items():
+                                new_dict[k] = to_mutable_dict_and_remap(v)
+                            scale_key = new_dict.pop("scale_key", None)
+                            scale_query = new_dict.pop("scale_query", None)
+                            if scale_key is not None or scale_query is not None:
+                                logger.info(
+                                    f"=== [REMAP SUCCESS: OUTER -> INNER] === Remapped scales under: {list(new_dict.keys())}"
+                                )
+                                if "i_proj" not in new_dict:
+                                    new_dict["i_proj"] = {}
+                                if scale_key is not None:
+                                    new_dict["i_proj"]["scale_key"] = scale_key
+                                if scale_query is not None:
+                                    new_dict["i_proj"]["scale_query"] = scale_query
+                            return new_dict
+                        if isinstance(d, list):
+                            return [to_mutable_dict_and_remap(x) for x in d]
+                        if isinstance(d, tuple):
+                            return tuple(to_mutable_dict_and_remap(x) for x in d)
+                        return d
+                    init_state = to_mutable_dict_and_remap(init_state)
+                elif self._qk_norm_remap_mode == "inner_to_outer":
+                    def to_mutable_dict_and_remap(d):
+                        if hasattr(d, "items"):
+                            new_dict = {}
+                            for k, v in d.items():
+                                new_dict[k] = to_mutable_dict_and_remap(v)
+                            if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
+                                i_proj = new_dict["i_proj"]
+                                scale_key = i_proj.pop("scale_key", None)
+                                scale_query = i_proj.pop("scale_query", None)
+                                if scale_key is not None or scale_query is not None:
+                                    logger.info(
+                                        f"=== [REMAP SUCCESS: INNER -> OUTER] === Remapped scales under: {list(new_dict.keys())}"
+                                    )
+                                    if scale_key is not None:
+                                        new_dict["scale_key"] = scale_key
+                                    if scale_query is not None:
+                                        new_dict["scale_query"] = scale_query
+                            return new_dict
+                        if isinstance(d, list):
+                            return [to_mutable_dict_and_remap(x) for x in d]
+                        if isinstance(d, tuple):
+                            return tuple(to_mutable_dict_and_remap(x) for x in d)
+                        return d
                     init_state = to_mutable_dict_and_remap(init_state)
         else:
             logger.warning(
