@@ -366,9 +366,6 @@ class AxLearnForCausalLM(nnx.Module):
             )
             trainer_cfg = configs_map[model_name]()
             self.axlearn_model_config = trainer_cfg.model.set(name=model_name)
-            if model_name and "qwen" in model_name.lower():
-                # Registry Qwen models (like 0.6B) expect outer scales, but GCS checkpoint is inner
-                self._qk_norm_remap_mode = "inner_to_outer"
         else:
             logger.info(
                 f"Named config '{model_name}' not found in AxLearn registry. Mapping properties model-agnostically from HF config."
@@ -410,8 +407,6 @@ class AxLearnForCausalLM(nnx.Module):
                 ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
-            # Bypassed Qwen models (like 30B) expect inner scales, but GCS checkpoint is outer
-            self._qk_norm_remap_mode = "outer_to_inner"
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
             if rope_theta is None:
@@ -431,6 +426,18 @@ class AxLearnForCausalLM(nnx.Module):
             num_experts = getattr(
                 model_config_hf, "num_local_experts",
                 getattr(model_config_hf, "num_experts", None))
+
+            # Resolve the QK-Norm remap mode structurally:
+            if num_experts is not None:
+                # MoE model (like 30B): GCS checkpoint is outer, JAX model expects inner
+                self._qk_norm_remap_mode = "outer_to_inner"
+            else:
+                # Dense Qwen model (like 0.6B): GCS checkpoint is inner, JAX model expects outer
+                model_type = getattr(model_config_hf, "model_type", "")
+                if "qwen" in model_type.lower():
+                    self._qk_norm_remap_mode = "inner_to_outer"
+                else:
+                    self._qk_norm_remap_mode = None
             ffn_layer_types = None
             expert_cfg = None
             if num_experts is not None:
