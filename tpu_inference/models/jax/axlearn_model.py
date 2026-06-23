@@ -170,6 +170,7 @@ class AxLearnForCausalLM(nnx.Module):
     def __init__(self, vllm_config: VllmConfig, rng_key: jax.Array,
                  mesh: Mesh) -> None:
         self.vllm_config = vllm_config
+        self._needs_qk_norm_remap = False
 
         # Re-map vLLM's physical mesh axis names to AxLearn's logical axis names
         vllm_axis_to_axlearn = {
@@ -406,6 +407,7 @@ class AxLearnForCausalLM(nnx.Module):
                 ),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
+            self._needs_qk_norm_remap = True
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
             if rope_theta is None:
@@ -672,7 +674,8 @@ class AxLearnForCausalLM(nnx.Module):
                         return tuple(remap_inner_to_outer(x) for x in d)
                     return d
 
-                target_specs = remap_inner_to_outer(target_specs)
+                if self._needs_qk_norm_remap:
+                    target_specs = remap_inner_to_outer(target_specs)
 
                 storage_builder = TensorStoreStateStorageBuilder.default_config(
                 ).set(
@@ -726,7 +729,8 @@ class AxLearnForCausalLM(nnx.Module):
                         
                     return d
 
-                init_state = to_mutable_dict_and_remap(init_state)
+                if self._needs_qk_norm_remap:
+                    init_state = to_mutable_dict_and_remap(init_state)
         else:
             logger.warning(
                 "No checkpoint path provided. Initializing parameters with random noise."
