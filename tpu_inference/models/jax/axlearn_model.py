@@ -427,18 +427,10 @@ class AxLearnForCausalLM(nnx.Module):
                 model_config_hf, "num_local_experts",
                 getattr(model_config_hf, "num_experts", None))
 
-            # Resolve the QK-Norm remap mode structurally:
-            if num_experts is not None:
-                # MoE model (like 30B): The GCS checkpoint has been successfully re-converted
-                # to the inner layout, so it natively matches the JAX serving structure. No remapping needed!
-                self._qk_norm_remap_mode = None
-            else:
-                # Dense Qwen model (like 0.6B): GCS checkpoint is inner, JAX model expects outer
-                model_type = getattr(model_config_hf, "model_type", "")
-                if "qwen" in model_type.lower():
-                    self._qk_norm_remap_mode = "inner_to_outer"
-                else:
-                    self._qk_norm_remap_mode = None
+            # Both dense (0.6B) and MoE (30B) Qwen checkpoints on GCS are now successfully aligned
+            # to the inner layout (i_proj/scale_query), matching the JAX serving structure natively.
+            # No serving-time remapping is needed for either model!
+            self._qk_norm_remap_mode = None
             ffn_layer_types = None
             expert_cfg = None
             if num_experts is not None:
