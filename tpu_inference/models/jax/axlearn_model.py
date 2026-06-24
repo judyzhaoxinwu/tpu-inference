@@ -192,19 +192,18 @@ class AxLearnForCausalLM(nnx.Module):
 
         # Dynamic imports inside active JAX Mesh context manager to force shard_map axis binding!
         with self.mesh:
+            # Monkey-patch AxLearn's native interleaved RoPE with HuggingFace-compatible split-half RoPE.
+            # This is required if the converted checkpoint did not have its Q/K weight matrices permuted.
+            import axlearn.common.attention as axlearn_attention
             from axlearn.common.attention import (
                 ForwardMode, FusedGroupedQKVLinear, FusedQKVLinear,
                 GroupedQueryAttention, MultiheadAttention, RoFormerQKVLinear)
             from axlearn.common.layers import RMSNorm
             from axlearn.common.utils import Tensor
-            
-            # Monkey-patch AxLearn's native interleaved RoPE with HuggingFace-compatible split-half RoPE.
-            # This is required if the converted checkpoint did not have its Q/K weight matrices permuted.
-            import axlearn.common.attention as axlearn_attention
             global _orig_apply_rotary_position_embeddings
             if _orig_apply_rotary_position_embeddings is None:
                 _orig_apply_rotary_position_embeddings = axlearn_attention.apply_rotary_position_embeddings
-            
+
             def split_half_apply_rotary_position_embeddings(
                 *,
                 query: jax.Array,
@@ -225,24 +224,27 @@ class AxLearnForCausalLM(nnx.Module):
                         rotary_key=rotary_key,
                         rotary_value=rotary_value,
                     )
-                
+
                 sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
                 cos_pos = jnp.concatenate([cos, cos], axis=-1)
                 sin_pos = jnp.concatenate([sin, sin], axis=-1)
-                
+
                 def rotate_half(x):
                     half_dim = x.shape[-1] // 2
-                    return jnp.concatenate([-x[..., half_dim:], x[..., :half_dim]], axis=-1)
-                    
+                    return jnp.concatenate(
+                        [-x[..., half_dim:], x[..., :half_dim]], axis=-1)
+
                 query = query * cos_pos + rotate_half(query) * sin_pos
                 if rotary_key:
                     key = key * cos_pos + rotate_half(key) * sin_pos
                 if rotary_value:
                     value = value * cos_pos + rotate_half(value) * sin_pos
                 return query, key, value
-                
+
             axlearn_attention.apply_rotary_position_embeddings = split_half_apply_rotary_position_embeddings
-            logger.info("=== [MONKEY PATCH] === Successfully registered dynamic HuggingFace/AxLearn RoPE router!")
+            logger.info(
+                "=== [MONKEY PATCH] === Successfully registered dynamic HuggingFace/AxLearn RoPE router!"
+            )
             from axlearn.experiments.text.gpt.c4_trainer import \
                 named_trainer_configs as c4_configs
             from axlearn.experiments.text.gpt.common import \
@@ -278,6 +280,7 @@ class AxLearnForCausalLM(nnx.Module):
                     md = _vllm_context.attention_metadata
 
                     import jax
+
                     from tpu_inference.layers.common.attention_interface import \
                         attention
                     mesh = jax.sharding.get_abstract_mesh()
@@ -300,9 +303,8 @@ class AxLearnForCausalLM(nnx.Module):
                         mesh,
                         self.per_head_dim(),
                     )
-                    outputs = jnp.expand_dims(outputs_3d, axis=1).astype(q_proj.dtype)
-
-
+                    outputs = jnp.expand_dims(outputs_3d,
+                                              axis=1).astype(q_proj.dtype)
 
                     _vllm_context.kv_caches[
                         _vllm_context.layer_index] = new_kv_cache
@@ -326,14 +328,18 @@ class AxLearnForCausalLM(nnx.Module):
         elif hasattr(model_config_hf, "text_config"):
             model_config_hf = model_config_hf.text_config
 
-        logger.info(f"=== [HF CONFIG DEBUG] ===\n{model_config_hf}\n=========================")
-        
+        logger.info(
+            f"=== [HF CONFIG DEBUG] ===\n{model_config_hf}\n========================="
+        )
+
         global _USE_SPLIT_HALF_ROPE
         # Since both the 0.6B and 30B checkpoints on GCS are now successfully converted
         # using the updated offline converter script (which permutes Q/K weights to interleaved format),
         # we set _USE_SPLIT_HALF_ROPE = False for all models. JAX will run native interleaved RoPE.
         _USE_SPLIT_HALF_ROPE = False
-        logger.info("=== [ROPE SWITCH] === All active GCS checkpoints are offline-permuted. Running 100% native AxLearn interleaved RoPE.")
+        logger.info(
+            "=== [ROPE SWITCH] === All active GCS checkpoints are offline-permuted. Running 100% native AxLearn interleaved RoPE."
+        )
 
         self.hidden_dim = getattr(model_config_hf, "hidden_size",
                                   getattr(model_config_hf, "hidden_dim", None))
@@ -388,8 +394,9 @@ class AxLearnForCausalLM(nnx.Module):
                     hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedQKVLinear.default_config()
 
+            from axlearn.common.attention import (ScaleKey, ScaleQuery,
+                                                  constant_scale_fn)
             from axlearn.common.config import config_for_function
-            from axlearn.common.attention import ScaleKey, ScaleQuery, constant_scale_fn
             norm_cfg = RMSNorm.default_config().set(
                 eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
                 forward_dtype=jnp.float32,
@@ -403,8 +410,8 @@ class AxLearnForCausalLM(nnx.Module):
                 rotary_value=False,
                 query_scale=ScaleQuery.default_config().set(
                     norm=norm_cfg.clone(),
-                    scale_factor=config_for_function(constant_scale_fn).set(value=1.0)
-                ),
+                    scale_factor=config_for_function(constant_scale_fn).set(
+                        value=1.0)),
                 key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
@@ -420,7 +427,8 @@ class AxLearnForCausalLM(nnx.Module):
             if rope_theta is None:
                 rope_theta = 10000.0
 
-            attention_qkv_linear.rope_pos_emb_layer.set(theta=float(rope_theta))
+            attention_qkv_linear.rope_pos_emb_layer.set(
+                theta=float(rope_theta))
 
             # 3. Setup MoE parameters dynamically (if expert keys are present)
             num_experts = getattr(
@@ -465,19 +473,22 @@ class AxLearnForCausalLM(nnx.Module):
                     gating=TopKGating.default_config().set(
                         num_experts_per_token=num_experts_per_token,
                         train_capacity_factor=0,
+                        eval_capacity_factor=float(num_experts),
                     ),
                 )
 
             from axlearn.common import decoder
+
             # Resolve the expert FFN dimension.
             # We use moe_intermediate_size (if present) for MoE models (e.g., 768),
             # and intermediate_size (e.g., 6144) for dense models.
             model_type = getattr(model_config_hf, "model_type", "")
             ffn_dim = getattr(
                 model_config_hf, "moe_intermediate_size",
-                getattr(model_config_hf, "intermediate_size", None)
+                getattr(model_config_hf, "intermediate_size", None))
+            logger.info(
+                f"=== [FFN DIM DEBUG] === ffn_dim: {ffn_dim} | model_type: {model_type}"
             )
-            logger.info(f"=== [FFN DIM DEBUG] === ffn_dim: {ffn_dim} | model_type: {model_type}")
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
@@ -499,8 +510,6 @@ class AxLearnForCausalLM(nnx.Module):
                 pad_token_id=model_config_hf.pad_token_id,
                 eos_token_id=model_config_hf.eos_token_id,
             ).set(name=model_name or "axlearn_model")
-
-
 
             self.axlearn_model_config.decoder.output_norm = RMSNorm.default_config(
             ).set(
@@ -655,12 +664,14 @@ class AxLearnForCausalLM(nnx.Module):
                 # looks up the correct outer paths in the checkpoint directory.
                 # Align the JAX model specs to match the GCS checkpoint layout
                 if self._qk_norm_remap_mode == "outer_to_inner":
+
                     def remap_inner_to_outer(d):
                         if hasattr(d, "items"):
                             new_dict = {}
                             for k, v in d.items():
                                 new_dict[k] = remap_inner_to_outer(v)
-                            if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
+                            if "i_proj" in new_dict and hasattr(
+                                    new_dict["i_proj"], "items"):
                                 i_proj = new_dict["i_proj"]
                                 scale_key = i_proj.pop("scale_key", None)
                                 scale_query = i_proj.pop("scale_query", None)
@@ -674,8 +685,10 @@ class AxLearnForCausalLM(nnx.Module):
                         if isinstance(d, tuple):
                             return tuple(remap_inner_to_outer(x) for x in d)
                         return d
+
                     target_specs = remap_inner_to_outer(target_specs)
                 elif self._qk_norm_remap_mode == "inner_to_outer":
+
                     def remap_outer_to_inner(d):
                         if hasattr(d, "items"):
                             new_dict = {}
@@ -689,13 +702,15 @@ class AxLearnForCausalLM(nnx.Module):
                                 if scale_key is not None:
                                     new_dict["i_proj"]["scale_key"] = scale_key
                                 if scale_query is not None:
-                                    new_dict["i_proj"]["scale_query"] = scale_query
+                                    new_dict["i_proj"][
+                                        "scale_query"] = scale_query
                             return new_dict
                         if isinstance(d, list):
                             return [remap_outer_to_inner(x) for x in d]
                         if isinstance(d, tuple):
                             return tuple(remap_outer_to_inner(x) for x in d)
                         return d
+
                     target_specs = remap_outer_to_inner(target_specs)
 
                 storage_builder = TensorStoreStateStorageBuilder.default_config(
@@ -716,6 +731,7 @@ class AxLearnForCausalLM(nnx.Module):
 
                 # Remap loaded parameters to match the active serving model layout
                 if self._qk_norm_remap_mode == "outer_to_inner":
+
                     def to_mutable_dict_and_remap(d):
                         if hasattr(d, "items"):
                             new_dict = {}
@@ -732,21 +748,26 @@ class AxLearnForCausalLM(nnx.Module):
                                 if scale_key is not None:
                                     new_dict["i_proj"]["scale_key"] = scale_key
                                 if scale_query is not None:
-                                    new_dict["i_proj"]["scale_query"] = scale_query
+                                    new_dict["i_proj"][
+                                        "scale_query"] = scale_query
                             return new_dict
                         if isinstance(d, list):
                             return [to_mutable_dict_and_remap(x) for x in d]
                         if isinstance(d, tuple):
-                            return tuple(to_mutable_dict_and_remap(x) for x in d)
+                            return tuple(
+                                to_mutable_dict_and_remap(x) for x in d)
                         return d
+
                     init_state = to_mutable_dict_and_remap(init_state)
                 elif self._qk_norm_remap_mode == "inner_to_outer":
+
                     def to_mutable_dict_and_remap(d):
                         if hasattr(d, "items"):
                             new_dict = {}
                             for k, v in d.items():
                                 new_dict[k] = to_mutable_dict_and_remap(v)
-                            if "i_proj" in new_dict and hasattr(new_dict["i_proj"], "items"):
+                            if "i_proj" in new_dict and hasattr(
+                                    new_dict["i_proj"], "items"):
                                 i_proj = new_dict["i_proj"]
                                 scale_key = i_proj.pop("scale_key", None)
                                 scale_query = i_proj.pop("scale_query", None)
@@ -762,8 +783,10 @@ class AxLearnForCausalLM(nnx.Module):
                         if isinstance(d, list):
                             return [to_mutable_dict_and_remap(x) for x in d]
                         if isinstance(d, tuple):
-                            return tuple(to_mutable_dict_and_remap(x) for x in d)
+                            return tuple(
+                                to_mutable_dict_and_remap(x) for x in d)
                         return d
+
                     init_state = to_mutable_dict_and_remap(init_state)
         else:
             logger.warning(
