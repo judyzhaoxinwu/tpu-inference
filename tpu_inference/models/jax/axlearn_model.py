@@ -405,15 +405,23 @@ class AxLearnForCausalLM(nnx.Module):
             # 2. Setup Rotary Position Embeddings (RoPE) and Q/K Linear
             # Configure QK-Norm scales on the inner projection layer (RoFormerQKVLinear)
             # so they execute BEFORE RoPE, matching the mathematically correct order of operations.
+            model_type = getattr(model_config_hf, "model_type", "").lower()
+            qk_layernorm = getattr(model_config_hf, "qk_layernorm",
+                                   False) or "qwen3" in model_type
+
             attention_qkv_linear = RoFormerQKVLinear.default_config().set(
                 input_linear=atten_input_linear,
                 rotary_value=False,
-                query_scale=ScaleQuery.default_config().set(
-                    norm=norm_cfg.clone(),
-                    scale_factor=config_for_function(constant_scale_fn).set(
-                        value=1.0)),
-                key_scale=ScaleKey.default_config().set(norm=norm_cfg.clone()),
             )
+            if qk_layernorm:
+                attention_qkv_linear.set(
+                    query_scale=ScaleQuery.default_config().set(
+                        norm=norm_cfg.clone(),
+                        scale_factor=config_for_function(
+                            constant_scale_fn).set(value=1.0)),
+                    key_scale=ScaleKey.default_config().set(
+                        norm=norm_cfg.clone()),
+                )
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
             if rope_theta is None:
