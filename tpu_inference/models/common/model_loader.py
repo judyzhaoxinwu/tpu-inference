@@ -72,6 +72,7 @@ def _get_model_architecture(config: PretrainedConfig) -> nnx.Module:
     # NOTE: Use inline imports here, otherwise the normal imports
     # would cause JAX init failure when using multi hosts with Ray.
 
+    from tpu_inference.models.jax.axlearn_model import AxLearnForCausalLM
     from tpu_inference.models.jax.deepseek_v3 import DeepseekV3ForCausalLM
     from tpu_inference.models.jax.dflash import DFlashForCausalLM
     from tpu_inference.models.jax.gemma4 import Gemma4ForCausalLM
@@ -104,6 +105,7 @@ def _get_model_architecture(config: PretrainedConfig) -> nnx.Module:
     _MODEL_REGISTRY["Gemma4ForCausalLM"] = Gemma4ForCausalLM
     _MODEL_REGISTRY["Gemma4MTPModel"] = Gemma4MTPForCausalLM
     _MODEL_REGISTRY["DFlashForCausalLM"] = DFlashForCausalLM
+    _MODEL_REGISTRY["AxLearnForCausalLM"] = AxLearnForCausalLM
 
     architectures = getattr(config, "architectures", [])
     for arch in architectures:
@@ -301,6 +303,23 @@ def _get_nnx_model(
                 model.load_weights(rng)
             if hasattr(vllm_config, "pytorch_pooler"):
                 del vllm_config.pytorch_pooler
+
+            # Print loaded weight statistics to verify checkpoint sanity
+            print("=== [MODEL LOADER] FULL MODEL PARAMETERS HEALTH REPORT ===",
+                  flush=True)
+
+            def print_stats(path: str, val: Any):
+                if hasattr(val, "shape"):
+                    print(
+                        f"  {path} | shape: {val.shape} | min/max/mean: {float(val.min())}/{float(val.max())}/{float(val.mean())}",
+                        flush=True)
+                elif isinstance(val, dict):
+                    for k, v in val.items():
+                        print_stats(f"{path}/{k}", v)
+
+            print_stats("model", model.axlearn_state.value)
+            print("=========================================================",
+                  flush=True)
             jit_model = create_jit_model(
                 model,
                 use_qwix_on_abstract_model=should_apply_qwix_on_abstract_model)

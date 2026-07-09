@@ -95,6 +95,7 @@ setup(
     entry_points={
         "vllm.general_plugins": [
             "register_layers = tpu_inference.layers.vllm:register_layers",
+            "register_axlearn_model_adapter = tpu_inference.models.jax.axlearn_model:register"
         ],
     },
 )

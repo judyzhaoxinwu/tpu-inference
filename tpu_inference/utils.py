@@ -143,11 +143,35 @@ def hbm_usage_bytes(devices: Any) -> List[Tuple[int, int]]:
                 logger.warning(
                     "Failed to get memory stats for device %s: %s. ", device,
                     e)
+    # else:
+    #     for device in devices:
+    #         hbm_used = device.memory_stats()["bytes_in_use"]
+    #         hbm_limit = device.memory_stats()["bytes_limit"]
+    #         usage.append((hbm_used, hbm_limit))
     else:
+        # MemoryStats is only supported for addressable PjRt devices.
+        # Find the first addressable device to query the stats, and propagate it to all.
+        local_stats = None
         for device in devices:
-            hbm_used = device.memory_stats()["bytes_in_use"]
-            hbm_limit = device.memory_stats()["bytes_limit"]
-            usage.append((hbm_used, hbm_limit))
+            # Skip non-addressable (remote host) devices to prevent PjRt crashes
+            if hasattr(device, "is_addressable") and not device.is_addressable:
+                continue
+            try:
+                stats = device.memory_stats()
+                if stats is not None:
+                    local_stats = (stats["bytes_in_use"], stats["bytes_limit"])
+                    break
+            except Exception as e:
+                logger.warning(
+                    "Failed to get memory stats for device %s: %s. ", device,
+                    e)
+
+        # Fallback if we couldn't retrieve stats from any local device
+        if local_stats is None:
+            local_stats = (0, 32 * GBYTES)
+
+        # Propagate the local stats safely to all devices in the mesh
+        usage.extend([local_stats] * len(devices))
 
     return usage
 
