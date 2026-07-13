@@ -227,24 +227,6 @@ class TPUWorker(WorkerBase):
                 and self.parallel_config.pipeline_parallel_size == 1):
             self._setup_dp_chip_isolation()
 
-        # Initialize JAX distributed system for multi-host serving (LWS, etc.)
-        if ("TPU_PROCESS_ADDRESSES" in os.environ
-                or "CLOUD_TPU_TASK_ID" in os.environ
-                or "TPU_WORKER_HOSTNAMES" in os.environ):
-            try:
-                logger.info(
-                    "Initializing JAX distributed system for multi-host serving..."
-                )
-                jax.distributed.initialize(initialization_timeout=120)
-                logger.info(
-                    f"JAX distributed system initialized successfully. "
-                    f"Process ID: {jax.process_index()} / {jax.process_count()}"
-                )
-            except Exception as e:
-                logger.warning(
-                    "JAX distributed system initialization skipped or failed: %s",
-                    e)
-
         # set tpu visible devices for Jax runtime in PP.
         multihost_backend = envs.TPU_MULTIHOST_BACKEND
         if self.parallel_config.pipeline_parallel_size > 1:
