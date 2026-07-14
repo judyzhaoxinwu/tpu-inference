@@ -1270,6 +1270,7 @@ class TPUModelRunner(KVConnectorModelRunnerMixin, LoRAModelRunnerMixin):
             padded_num_scheduled_tokens_per_dp_rank,
             _,
         ) = self._prepare_inputs(scheduler_output)
+
         # multi-modal support
         if self.is_multimodal_model:
             # Run the multimodal encoder if any.
