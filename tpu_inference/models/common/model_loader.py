@@ -303,7 +303,6 @@ def _get_nnx_model(
                 model.load_weights(rng)
             if hasattr(vllm_config, "pytorch_pooler"):
                 del vllm_config.pytorch_pooler
-
             jit_model = create_jit_model(
                 model,
                 use_qwix_on_abstract_model=should_apply_qwix_on_abstract_model)
