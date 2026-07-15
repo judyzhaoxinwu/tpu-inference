@@ -14,7 +14,7 @@
 """Wrapper for AXLearn models."""
 
 import threading
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -137,27 +137,6 @@ def _recursive_set_block_size(cfg):
                     _recursive_set_block_size(item)
             elif hasattr(val, 'klass') or isinstance(val, ConfigBase):
                 _recursive_set_block_size(val)
-
-
-def _recursive_set_outer_batch(cfg, outer_batch_size):
-    from axlearn.common.config import ConfigBase
-
-    if isinstance(cfg, ConfigBase):
-        if hasattr(cfg, "outer_batch"):
-            logger.info(
-                f"Dynamically setting MoE outer_batch to {outer_batch_size} to match serving mesh"
-            )
-            cfg.outer_batch = outer_batch_size
-        for key in cfg.keys():
-            val = getattr(cfg, key)
-            if isinstance(val, dict):
-                for v in val.values():
-                    _recursive_set_outer_batch(v, outer_batch_size)
-            elif isinstance(val, (list, tuple)):
-                for item in val:
-                    _recursive_set_outer_batch(item, outer_batch_size)
-            elif hasattr(val, "klass") or isinstance(val, ConfigBase):
-                _recursive_set_outer_batch(val, outer_batch_size)
 
 
 class AxLearnForCausalLM(nnx.Module):
@@ -319,33 +298,11 @@ class AxLearnForCausalLM(nnx.Module):
                     hidden_dim=atten_hidden_dim)
                 atten_input_linear = FusedQKVLinear.default_config()
 
-            from axlearn.common.attention import (ScaleKey, ScaleQuery,
-                                                  constant_scale_fn)
-            from axlearn.common.config import config_for_function
-            norm_cfg = RMSNorm.default_config().set(
-                eps=getattr(model_config_hf, "rms_norm_eps", 1e-6),
-                forward_dtype=jnp.float32,
-            )
-
             # 2. Setup Rotary Position Embeddings (RoPE) and Q/K Linear
-            # Configure QK-Norm scales on the inner projection layer (RoFormerQKVLinear)
-            # so they execute BEFORE RoPE, matching the mathematically correct order of operations.
-            model_type = getattr(model_config_hf, "model_type", "").lower()
-            qk_layernorm = getattr(model_config_hf, "qk_layernorm", False)
-
             attention_qkv_linear = RoFormerQKVLinear.default_config().set(
                 input_linear=atten_input_linear,
                 rotary_value=False,
             )
-            if qk_layernorm:
-                attention_qkv_linear.set(
-                    query_scale=ScaleQuery.default_config().set(
-                        norm=norm_cfg.clone(),
-                        scale_factor=config_for_function(
-                            constant_scale_fn).set(value=1.0)),
-                    key_scale=ScaleKey.default_config().set(
-                        norm=norm_cfg.clone()),
-                )
             # Robustly extract rope_theta, checking rope_scaling and rope_parameters dicts
             rope_theta = getattr(model_config_hf, "rope_theta", None)
             if rope_theta is None:
@@ -362,61 +319,14 @@ class AxLearnForCausalLM(nnx.Module):
             attention_qkv_linear.rope_pos_emb_layer.set(
                 theta=float(rope_theta))
 
-            # 3. Setup MoE parameters dynamically (if expert keys are present)
-            num_experts = getattr(
-                model_config_hf, "num_local_experts",
-                getattr(model_config_hf, "num_experts", None))
+            from axlearn.common import decoder
 
             ffn_layer_types = None
             expert_cfg = None
-            if num_experts is not None:
-                from axlearn.common.mixture_of_experts import (
-                    TopKGating, TransformerFeedForwardMoE)
-                ffn_layer_types = ["sparse"]
-                num_experts_per_token = getattr(
-                    model_config_hf, "num_experts_per_tok",
-                    getattr(model_config_hf, "num_experts_per_token", 8))
-                from axlearn.common.utils import PartitionSpec
-                expert_cfg = TransformerFeedForwardMoE.default_config().set(
-                    num_experts=num_experts,
-                    num_groups=1,
-                    dim_to_mesh_axis_map={
-                        "me":
-                        PartitionSpec(None, None),
-                        "emh":
-                        PartitionSpec("model", None, None),
-                        "ehm":
-                        PartitionSpec("model", None, None),
-                        "ogsm":
-                        PartitionSpec("data", "expert", None, "model"),
-                        "ogsec":
-                        PartitionSpec("data", "expert", None, None, None),
-                        "oegcm":
-                        PartitionSpec("data", "expert", None, None, "model"),
-                        "ogecm":
-                        PartitionSpec("data", "expert", None, None, "model"),
-                        "oegch":
-                        PartitionSpec("data", "expert", None, None, "model"),
-                    },
-                    gating=TopKGating.default_config().set(
-                        num_experts_per_token=num_experts_per_token,
-                        train_capacity_factor=0,
-                        eval_capacity_factor=float(num_experts),
-                    ),
-                )
 
-            from axlearn.common import decoder
-
-            # Resolve the expert FFN dimension.
-            # We use moe_intermediate_size (if present) for MoE models (e.g., 768),
-            # and intermediate_size (e.g., 6144) for dense models.
-            model_type = getattr(model_config_hf, "model_type", "")
-            ffn_dim = getattr(
-                model_config_hf, "moe_intermediate_size",
-                getattr(model_config_hf, "intermediate_size", None))
-            logger.info(
-                f"=== [FFN DIM DEBUG] === ffn_dim: {ffn_dim} | model_type: {model_type}"
-            )
+            # Resolve the FFN dimension.
+            ffn_dim = getattr(model_config_hf, "intermediate_size", None)
+            logger.info(f"=== [FFN DIM DEBUG] === ffn_dim: {ffn_dim}")
             self.axlearn_model_config = common_model_config(
                 num_layers=model_config_hf.num_hidden_layers,
                 hidden_dim=model_config_hf.hidden_size,
@@ -456,13 +366,6 @@ class AxLearnForCausalLM(nnx.Module):
                                   VllmMultiheadAttention,
                                   VllmGroupedQueryAttention)
         _recursive_set_block_size(self.axlearn_model_config)
-
-        # Dynamically calculate MoE outer batch size from active serving mesh
-        outer_batch_size = 1
-        for axis in ("data", "fsdp"):
-            if axis in self.mesh.shape:
-                outer_batch_size *= self.mesh.shape[axis]
-        _recursive_set_outer_batch(self.axlearn_model_config, outer_batch_size)
 
         # Explicitly enforce highly efficient layer-wise Remat boundaries to reduce XLA compilation temporaries from 18 GB down to 256 MB
         from axlearn.common.base_layer import RematSpec
@@ -611,10 +514,3 @@ class AxLearnForCausalLM(nnx.Module):
             init_state = self.model.initialize_parameters_recursively(rng_key)
 
         self.axlearn_state = nnx.Param(init_state)
-
-    def get_mrope_input_positions(
-            self, prompt_token_ids: List[int],
-            mm_features: List[Any]) -> Tuple[jax.Array, int]:
-        seq_len = len(prompt_token_ids)
-        positions = jnp.vstack([jnp.arange(seq_len, dtype=jnp.int32)] * 3)
-        return positions, 0
